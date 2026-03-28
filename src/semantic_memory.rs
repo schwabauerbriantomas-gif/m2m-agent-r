@@ -311,6 +311,91 @@ impl SemanticMemoryDB {
         config.latent_dim = self.latent_dim;
         self.store = SplatStore::new(config);
     }
+
+    /// Store multiple memories at once.
+    pub fn batch_store(&mut self, items: &[(String, Option<serde_json::Value>)]) -> Result<Vec<String>, String> {
+        let mut ids = Vec::with_capacity(items.len());
+        for (text, meta) in items {
+            let id = self.store(text, meta.clone())?;
+            ids.push(id);
+        }
+        Ok(ids)
+    }
+
+    /// Apply temporal decay: boost recent memories, penalize old ones.
+    /// Returns the number of memories affected.
+    pub fn apply_temporal_decay(&mut self, half_life_days: f64) -> usize {
+        let now = Self::now_secs();
+        let half_life_secs = half_life_days * 86400.0;
+        let decay_constant = 0.693 / half_life_secs; // ln(2) / half_life
+
+        let mut affected = 0;
+        let ids: Vec<String> = self.timestamps.keys().cloned().collect();
+        for id in ids {
+            if self.deleted.contains(&id) { continue; }
+            if let Some(&ts) = self.timestamps.get(&id) {
+                let age = now - ts;
+                let decay = (-decay_constant * age).exp(); // 1.0 for fresh, ~0 for old
+                if decay < 0.01 {
+                    // Remove very old memories
+                    self.deleted.insert(id);
+                    affected += 1;
+                }
+            }
+        }
+        affected
+    }
+
+    /// Search with temporal decay applied to scores.
+    pub fn search_with_decay(
+        &mut self,
+        query: &str,
+        k: usize,
+        half_life_days: f64,
+    ) -> Result<Vec<MemoryResult>, String> {
+        let mut results = self.search(query, k * 2)?;
+        let now = Self::now_secs();
+        let half_life_secs = half_life_days * 86400.0;
+        let decay_constant = 0.693 / half_life_secs;
+
+        for r in &mut results {
+            if let Some(&ts) = self.timestamps.get(&r.id) {
+                let age = now - ts;
+                let boost = (-decay_constant * age).exp();
+                r.score *= boost;
+            }
+        }
+
+        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        results.truncate(k);
+        Ok(results)
+    }
+
+    /// Get all categories present in stored memories.
+    pub fn categories(&self) -> Vec<String> {
+        let mut cats = std::collections::HashSet::new();
+        for meta in self.doc_metadata.values() {
+            if let Some(obj) = meta.as_object() {
+                if let Some(cat) = obj.get("category").and_then(|v| v.as_str()) {
+                    cats.insert(cat.to_string());
+                }
+            }
+        }
+        cats.into_iter().collect()
+    }
+
+    /// Count memories by category.
+    pub fn count_by_category(&self) -> HashMap<String, usize> {
+        let mut counts = HashMap::new();
+        for meta in self.doc_metadata.values() {
+            if let Some(obj) = meta.as_object() {
+                if let Some(cat) = obj.get("category").and_then(|v| v.as_str()) {
+                    *counts.entry(cat.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+        counts
+    }
 }
 
 #[cfg(test)]
@@ -359,5 +444,39 @@ mod tests {
     fn test_empty_query_error() {
         let mut db = make_test_db();
         assert!(db.search("", 5).is_err());
+    }
+
+    #[test]
+    fn test_batch_store() {
+        let mut db = make_test_db();
+        let items = vec![
+            ("First memory".into(), None),
+            ("Second memory".into(), Some(serde_json::json!({"category": "test"}))),
+        ];
+        let ids = db.batch_store(&items).unwrap();
+        assert_eq!(ids.len(), 2);
+        let stats = db.stats();
+        assert_eq!(stats["total_memories"], 2);
+    }
+
+    #[test]
+    fn test_categories() {
+        let mut db = make_test_db();
+        db.store("We decided to use Rust", Some(serde_json::json!({"category": "decision"}))).unwrap();
+        db.store("Bug in the code", Some(serde_json::json!({"category": "error"}))).unwrap();
+        let cats = db.categories();
+        assert!(cats.contains(&"decision".to_string()));
+        assert!(cats.contains(&"error".to_string()));
+    }
+
+    #[test]
+    fn test_count_by_category() {
+        let mut db = make_test_db();
+        db.store("Decision one", Some(serde_json::json!({"category": "decision"}))).unwrap();
+        db.store("Decision two", Some(serde_json::json!({"category": "decision"}))).unwrap();
+        db.store("Bug found", Some(serde_json::json!({"category": "error"}))).unwrap();
+        let counts = db.count_by_category();
+        assert_eq!(*counts.get("decision").unwrap(), 2);
+        assert_eq!(*counts.get("error").unwrap(), 1);
     }
 }
