@@ -12,6 +12,10 @@ pub mod hrm2_engine;
 pub mod ebm;
 pub mod storage;
 
+pub mod splats;
+pub mod quantization;
+
 pub use config::M2MConfig;
 pub use geometry::{normalize_sphere, geodesic_distance};
 pub use splat_types::{GaussianSplat, SplatEmbedding, SplatCluster};
+pub use splats::SplatStore;

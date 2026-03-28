@@ -39,6 +39,7 @@ impl SinusoidalPositionEncoder {
     }
 
     /// Get output dimension
+    #[allow(clippy::misnamed_getters)]
     pub fn dim(&self) -> usize {
         self.target_dim
     }
@@ -403,23 +404,11 @@ impl FullEmbeddingBuilder {
         let color_enc = self.color_encoder.encode(colors);
         let attr_enc = self.attr_encoder.encode(opacities, scales, rotations);
         
-        // Concatenate along axis 1
+        // Concatenate along axis 1 using slice assignment
         let mut result = Array2::<f32>::zeros((n, 640));
-        
-        for i in 0..n {
-            // Position encoding (60 actual dims, padded to 64)
-            for j in 0..64 {
-                result[[i, j]] = pos_enc[[i, j]];
-            }
-            // Color encoding (512 dims)
-            for j in 0..512 {
-                result[[i, 64 + j]] = color_enc[[i, j]];
-            }
-            // Attribute encoding (64 dims)
-            for j in 0..64 {
-                result[[i, 576 + j]] = attr_enc[[i, j]];
-            }
-        }
+        result.slice_mut(s![.., 0..64]).assign(&pos_enc.slice(s![.., 0..64]));
+        result.slice_mut(s![.., 64..576]).assign(&color_enc);
+        result.slice_mut(s![.., 576..640]).assign(&attr_enc);
         
         result
     }

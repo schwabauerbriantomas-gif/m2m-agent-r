@@ -3,7 +3,8 @@
 //! Ported from Python m2m/engine.py. Uses ndarray einsum for batch L2 distances
 //! and partial_sort for efficient top-k selection.
 
-use ndarray::{Array1, Array2, ArrayView1};
+use ndarray::{Array2, ArrayView1};
+use rayon::prelude::*;
 
 /// Result entry from expert distance computation.
 #[derive(Debug, Clone)]
@@ -53,10 +54,10 @@ impl M2MEngine {
 
         // Use einsum for vectorized squared L2 distance: ||e - q||^2
         let q = ArrayView1::from(query);
-        let distances_sq: Array1<f32> = expert_embeddings
-            .rows()
-            .into_iter()
-            .map(|row| {
+        let distances_sq: Vec<f32> = expert_embeddings
+            .outer_iter()
+            .par_bridge()
+            .map(|row: ndarray::ArrayView1<f32>| {
                 row.iter()
                     .zip(q.iter())
                     .map(|(e, qv)| {
@@ -99,6 +100,7 @@ impl M2MEngine {
         let q = ArrayView1::from(query);
         let distances_sq: Vec<f32> = expert_embeddings
             .outer_iter()
+            .par_bridge()
             .map(|row| {
                 row.iter()
                     .zip(q.iter())
@@ -135,6 +137,7 @@ impl M2MEngine {
         let q = ArrayView1::from(query);
         let distances_sq: Vec<f32> = expert_embeddings
             .outer_iter()
+            .par_bridge()
             .map(|row| {
                 row.iter()
                     .zip(q.iter())

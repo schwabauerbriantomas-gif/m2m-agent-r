@@ -5,6 +5,7 @@ use ndarray::{Array1, Array2, ArrayView2};
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 use rand::SeedableRng;
+use rayon::prelude::*;
 
 /// KMeans clustering result.
 #[derive(Clone, Debug)]
@@ -96,23 +97,29 @@ impl KMeans {
         let mut new_centroids = Array2::zeros((k, dim));
 
         for iteration in 0..self.max_iter {
-            // Assignment step: assign each point to nearest centroid
-            let mut changed = 0usize;
+            // Assignment step: assign each point to nearest centroid (parallel)
+            let assignments: Vec<(usize, usize, f32)> = (0..n)
+                .into_par_iter()
+                .map(|i| {
+                    let row = data.row(i);
+                    let (best_k, best_dist) = (0..k)
+                        .map(|c| {
+                            let diff = &row - &centroids.row(c);
+                            let d = diff.dot(&diff);
+                            (c, d)
+                        })
+                        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                        .unwrap();
+                    (i, best_k, best_dist)
+                })
+                .collect();
+
             new_centroids.fill(0.0);
             counts.iter_mut().for_each(|c| *c = 0);
+            let mut changed = 0usize;
             let mut total_inertia = 0.0f32;
 
-            for i in 0..n {
-                let row = data.row(i);
-                let (best_k, best_dist) = (0..k)
-                    .map(|c| {
-                        let diff = &row - &centroids.row(c);
-                        let d = diff.dot(&diff);
-                        (c, d)
-                    })
-                    .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-                    .unwrap();
-
+            for &(i, best_k, best_dist) in &assignments {
                 if labels[i] != best_k {
                     changed += 1;
                 }
@@ -120,17 +127,17 @@ impl KMeans {
                 total_inertia += best_dist;
                 counts[best_k] += 1;
                 let mut cent_row = new_centroids.row_mut(best_k);
-                cent_row.scaled_add(1.0, &row);
+                cent_row.scaled_add(1.0, &data.row(i));
             }
 
             self.inertia = total_inertia;
 
             // Update step: recompute centroids
-            for c in 0..k {
-                if counts[c] > 0 {
+            for (c, count) in counts.iter().enumerate().take(k) {
+                if *count > 0 {
                     let mut row = centroids.row_mut(c);
                     row.assign(&new_centroids.row(c));
-                    row.mapv_inplace(|v| v / counts[c] as f32);
+                    row.mapv_inplace(|v| v / *count as f32);
                 }
                 // else: keep old centroid
             }
@@ -145,8 +152,8 @@ impl KMeans {
 
         // Handle clusters with 0 members by re-assigning their centroids
         // to the point furthest from its centroid
-        for c in 0..k {
-            if counts[c] == 0 {
+        for (c, count) in counts.iter().enumerate().take(k) {
+            if *count == 0 {
                 // Find point with max distance to its assigned centroid
                 let mut best_dist = 0.0f32;
                 let mut best_idx = 0;
@@ -173,23 +180,23 @@ impl KMeans {
     pub fn predict(&self, data: &ArrayView2<f32>) -> Array1<usize> {
         let centroids = self.centroids.as_ref().expect("Must call fit() first");
         let n = data.nrows();
-        let mut labels = Array1::zeros(n);
+        let labels: Vec<usize> = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let row = data.row(i);
+                (0..centroids.nrows())
+                    .map(|c| {
+                        let diff = &row - &centroids.row(c);
+                        diff.dot(&diff)
+                    })
+                    .enumerate()
+                    .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                    .map(|(idx, _)| idx)
+                    .unwrap()
+            })
+            .collect();
 
-        for i in 0..n {
-            let row = data.row(i);
-            let best = (0..centroids.nrows())
-                .map(|c| {
-                    let diff = &row - &centroids.row(c);
-                    diff.dot(&diff)
-                })
-                .enumerate()
-                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-                .map(|(idx, _)| idx)
-                .unwrap();
-            labels[i] = best;
-        }
-
-        labels
+        Array1::from(labels)
     }
 
     /// Fit and return labels.
@@ -201,18 +208,28 @@ impl KMeans {
     /// Transform: compute distances from each point to each centroid.
     pub fn transform<S>(&self, data: &ndarray::ArrayBase<S, ndarray::Dim<[usize; 2]>>) -> Array2<f32>
     where
-        S: ndarray::Data<Elem = f32>,
+        S: ndarray::Data<Elem = f32> + std::marker::Sync,
     {
         let centroids = self.centroids.as_ref().expect("Must call fit() first");
         let n = data.nrows();
         let k = centroids.nrows();
-        let mut distances = Array2::zeros((n, k));
+        let rows: Vec<Vec<f32>> = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let row = data.row(i);
+                (0..k)
+                    .map(|c| {
+                        let diff = &row - &centroids.row(c);
+                        diff.dot(&diff).sqrt()
+                    })
+                    .collect()
+            })
+            .collect();
 
-        for i in 0..n {
-            let row = data.row(i);
-            for c in 0..k {
-                let diff = &row - &centroids.row(c);
-                distances[[i, c]] = diff.dot(&diff).sqrt();
+        let mut distances = Array2::zeros((n, k));
+        for (i, row_dists) in rows.iter().enumerate() {
+            for (c, &d) in row_dists.iter().enumerate() {
+                distances[[i, c]] = d;
             }
         }
 

@@ -100,7 +100,7 @@ impl EBMEnergy {
     }
 
     fn has_splats(&self) -> bool {
-        self.splat_mu.as_ref().map_or(false, |m| m.nrows() > 0)
+        self.splat_mu.as_ref().is_some_and(|m| m.nrows() > 0)
     }
 
     /// Compute energy E(x) for a single vector.
@@ -208,7 +208,7 @@ impl EBMEnergy {
     /// and detecting need for SOC reorganization.
     pub fn free_energy(&self) -> f32 {
         match &self.splat_alpha {
-            Some(alpha) if alpha.len() > 0 => {
+            Some(alpha) if !alpha.is_empty() => {
                 let z: f32 = alpha.iter().sum();
                 if z > 0.0 { -z.ln() } else { f32::INFINITY }
             }
@@ -268,7 +268,7 @@ impl EBMEnergy {
         }).collect();
 
         let y_grid: Vec<f32> = (0..resolution).flat_map(|i| {
-            std::iter::repeat(-radius + i as f32 * step).take(resolution)
+            std::iter::repeat_n(-radius + i as f32 * step, resolution)
         }).collect();
 
         (x_grid, y_grid, energy_map)

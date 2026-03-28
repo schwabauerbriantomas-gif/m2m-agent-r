@@ -94,8 +94,9 @@ pub struct M2MConfig {
 }
 
 /// Dtype enum to represent numpy-style data types
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub enum Dtype {
+    #[default]
     Float32,
     Float64,
     Int32,
@@ -105,12 +106,6 @@ pub enum Dtype {
 impl Dtype {
     pub fn as_any(&self) -> &dyn Any {
         self
-    }
-}
-
-impl Default for Dtype {
-    fn default() -> Self {
-        Dtype::Float32
     }
 }
 

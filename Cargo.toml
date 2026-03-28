@@ -17,6 +17,8 @@ bincode = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tempfile = "3"
 rayon = "1"
+clap = { version = "4", features = ["derive"] }
+turbo-quant = { path = "C:/Users/user/projects/turbo-quant" }
 
 [dev-dependencies]
 criterion = "0.5"

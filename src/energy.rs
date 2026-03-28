@@ -140,10 +140,11 @@ impl EnergyFunction {
     ///
     /// For vectors on S^{D-1}, ||x|| should be approximately 1.
     pub fn e_geom(&self, x: &Array2<f32>) -> Vec<f32> {
+        // Fully vectorized: ||x||^2 via row dot product, then (sqrt - 1)^2
         x.outer_iter()
             .map(|row| {
-                let norm: f32 = row.iter().map(|&v| v * v).sum::<f32>().sqrt();
-                let d = norm - 1.0;
+                let norm_sq = row.dot(&row);
+                let d = norm_sq.sqrt() - 1.0;
                 d * d
             })
             .collect()
@@ -170,8 +171,8 @@ impl EnergyFunction {
         let e_c = self.e_comp(x);
 
         e_s.into_iter()
-            .zip(e_g.into_iter())
-            .zip(e_c.into_iter())
+            .zip(e_g)
+            .zip(e_c)
             .map(|((es, eg), ec)| es + self.weights.geom_weight * eg + self.weights.comp_weight * ec)
             .collect()
     }

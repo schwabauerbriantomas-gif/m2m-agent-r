@@ -127,9 +127,9 @@ impl CrossPolytopeLSH {
         let mut total_found = 0usize;
         let total_expected = n * k;
 
-        for i in 0..n {
+        for (i, gt) in ground_truth.iter().enumerate().take(n) {
             let (predicted, _) = self.query(&queries.row(i), k);
-            let gt_set: std::collections::HashSet<usize> = ground_truth[i].iter().copied().collect();
+            let gt_set: std::collections::HashSet<usize> = gt.iter().copied().collect();
             for &p in &predicted {
                 if gt_set.contains(&p) {
                     total_found += 1;

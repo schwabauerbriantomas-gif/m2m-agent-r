@@ -114,7 +114,7 @@ impl M2MPersistence {
         std::fs::read_dir(&dir)
             .map(|entries| entries
                 .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().map_or(false, |ext| ext == "bin"))
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "bin"))
                 .filter_map(|e| e.path().file_stem().map(|s| s.to_string_lossy().into_owned()))
                 .collect()
             )
