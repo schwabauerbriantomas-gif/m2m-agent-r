@@ -115,6 +115,76 @@ impl SplatStore {
         (0..queries.nrows()).map(|i| self.find_neighbors(&queries.row(i), k)).collect()
     }
 
+    /// Find neighbors with validation. Returns error on invalid input.
+    pub fn find_neighbors_validated(
+        &self,
+        query: &ArrayView1<f32>,
+        k: usize,
+    ) -> Result<Vec<NeighborResult>, String> {
+        if k < 1 { return Err("k must be >= 1".into()); }
+        if query.len() != self.config.latent_dim {
+            return Err(format!("Query dimension mismatch: expected {}, got {}", self.config.latent_dim, query.len()));
+        }
+        if !query.iter().all(|v| v.is_finite()) {
+            return Err("Query vector contains NaN or Inf".into());
+        }
+        Ok(self.find_neighbors(query, k))
+    }
+
+    /// Load pre-computed splats (mu, alpha, kappa) into the store.
+    pub fn load_splats(
+        &mut self,
+        mu_data: &Array2<f32>,
+        alpha_data: &[f32],
+        kappa_data: &[f32],
+    ) -> Result<(), String> {
+        let n = mu_data.nrows();
+        if n > self.max_splats {
+            return Err(format!("Too many splats: {} > {}", n, self.max_splats));
+        }
+        if alpha_data.len() < n || kappa_data.len() < n {
+            return Err("alpha/kappa arrays too short".into());
+        }
+        for i in 0..n {
+            self.mu.row_mut(i).assign(&mu_data.row(i));
+            self.alpha[i] = alpha_data[i];
+            self.kappa[i] = kappa_data[i];
+            self.frequency[i] = 1.0;
+        }
+        // Zero out remainder
+        for i in n..self.max_splats {
+            self.mu.row_mut(i).fill(0.0);
+            self.alpha[i] = 0.0;
+            self.kappa[i] = 0.0;
+            self.frequency[i] = 0.0;
+        }
+        self.n_active = n;
+        self.next_id = n as u64;
+        Ok(())
+    }
+
+    /// Update frequency for accessed splats (SOC boost).
+    pub fn touch(&mut self, indices: &[usize]) {
+        for &idx in indices {
+            if idx < self.n_active {
+                self.frequency[idx] += 1.0;
+            }
+        }
+    }
+
+    /// Decay all frequencies (call periodically).
+    pub fn decay_frequencies(&mut self, factor: f32) {
+        for i in 0..self.n_active {
+            self.frequency[i] *= factor;
+        }
+    }
+
+    /// Get active frequency values.
+    pub fn get_frequency(&self) -> Option<Array1<f32>> {
+        if self.n_active == 0 { return None; }
+        Some(self.frequency.slice(ndarray::s![..self.n_active]).to_owned())
+    }
+
     /// Shannon entropy of the kappa distribution.
     pub fn entropy(&self) -> f32 {
         if self.n_active == 0 {
