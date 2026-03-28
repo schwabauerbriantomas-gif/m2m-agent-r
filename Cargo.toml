@@ -6,7 +6,7 @@ description = "M2M Vector Search - Native Rust implementation"
 license = "AGPL-3.0"
 
 [dependencies]
-ndarray = "0.16"
+ndarray = { version = "0.16", features = ["serde"] }
 ndarray-stats = "0.6"
 ndarray-rand = "0.15"
 rand = "0.8"
@@ -19,6 +19,8 @@ tempfile = "3"
 rayon = "1"
 clap = { version = "4", features = ["derive"] }
 turbo-quant = { path = "C:/Users/user/projects/turbo-quant" }
+regex = "1"
+chrono = "0.4"
 
 [dev-dependencies]
 criterion = "0.5"
