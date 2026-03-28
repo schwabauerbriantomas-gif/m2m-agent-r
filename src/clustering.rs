@@ -5,7 +5,6 @@ use ndarray::{Array1, Array2, ArrayView2};
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
 use rand::SeedableRng;
-use rayon::prelude::*;
 
 /// KMeans clustering result.
 #[derive(Clone, Debug)]
@@ -99,7 +98,7 @@ impl KMeans {
         for iteration in 0..self.max_iter {
             // Assignment step: assign each point to nearest centroid (parallel)
             let assignments: Vec<(usize, usize, f32)> = (0..n)
-                .into_par_iter()
+                .into_iter()
                 .map(|i| {
                     let row = data.row(i);
                     let (best_k, best_dist) = (0..k)
@@ -181,7 +180,7 @@ impl KMeans {
         let centroids = self.centroids.as_ref().expect("Must call fit() first");
         let n = data.nrows();
         let labels: Vec<usize> = (0..n)
-            .into_par_iter()
+            .into_iter()
             .map(|i| {
                 let row = data.row(i);
                 (0..centroids.nrows())
@@ -214,7 +213,7 @@ impl KMeans {
         let n = data.nrows();
         let k = centroids.nrows();
         let rows: Vec<Vec<f32>> = (0..n)
-            .into_par_iter()
+            .into_iter()
             .map(|i| {
                 let row = data.row(i);
                 (0..k)
