@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 use ndarray::{Array1, Array2};
 use m2m_vector_search::{
     M2MConfig, SplatStore,
-    storage::persistence::M2MPersistence,
+    storage::persistence::{M2MPersistence, StorageBackend},
     quantization::{QuantConfig, QuantAlgorithm, QuantizedStore},
 };
 use std::path::PathBuf;
@@ -23,6 +23,10 @@ struct Cli {
     /// Max splats capacity
     #[arg(long, global = true, default_value = "100000")]
     max_splats: usize,
+
+    /// Metadata storage backend: sqlite, json
+    #[arg(long, global = true, default_value = "sqlite")]
+    backend: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -189,8 +193,20 @@ fn make_config(dim: usize, max_splats: usize) -> M2MConfig {
     c
 }
 
+fn resolve_backend(name: &str) -> StorageBackend {
+    match name {
+        "json" | "json-file" => StorageBackend::JsonFile,
+        "sqlite" => StorageBackend::Sqlite,
+        _ => StorageBackend::Sqlite,
+    }
+}
+
+fn make_persistence(data_dir: &str, backend: &str, rw: bool) -> Result<M2MPersistence, Box<dyn std::error::Error + Send + Sync>> {
+    M2MPersistence::with_backend(data_dir, resolve_backend(backend), rw)
+}
+
 fn load_or_create_store(data_dir: &str, config: &M2MConfig) -> (SplatStore, Option<M2MPersistence>) {
-    let persist = M2MPersistence::new(data_dir, true).ok();
+    let persist = make_persistence(data_dir, "sqlite", true).ok();
     let mut store = SplatStore::new(config.clone());
 
     // Try loading default shard
@@ -293,7 +309,7 @@ fn main() {
             };
             eprintln!("[m2m] Loaded {} vectors ({}D) from {}", vectors.nrows(), vectors.ncols(), input.display());
 
-            let persist = M2MPersistence::new(&cli.data_dir, true)
+            let persist = make_persistence(&cli.data_dir, &cli.backend, true)
                 .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
 
             persist.save_vectors(&vectors, &shard)
@@ -466,7 +482,7 @@ fn main() {
         }
 
         Commands::Load { shard } => {
-            let persist = M2MPersistence::new(&cli.data_dir, true)
+            let persist = make_persistence(&cli.data_dir, &cli.backend, true)
                 .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
 
             match persist.load_vectors(&shard) {
@@ -489,14 +505,14 @@ fn main() {
         }
 
         Commands::List => {
-            let persist = M2MPersistence::new(&cli.data_dir, false)
+            let persist = make_persistence(&cli.data_dir, &cli.backend, false)
                 .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
             let shards = persist.list_shards();
             println!("{}", serde_json::json!({"shards": shards}));
         }
 
         Commands::DocAdd { id, text, metadata } => {
-            let persist = M2MPersistence::new(&cli.data_dir, true)
+            let persist = make_persistence(&cli.data_dir, &cli.backend, true)
                 .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
             let meta_json = metadata.as_deref()
                 .and_then(|s| serde_json::from_str(s).ok());
@@ -506,7 +522,7 @@ fn main() {
         }
 
         Commands::DocGet { id } => {
-            let persist = M2MPersistence::new(&cli.data_dir, false)
+            let persist = make_persistence(&cli.data_dir, &cli.backend, false)
                 .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
             match persist.get_metadata(&id) {
                 Ok(Some(meta)) => println!("{}", serde_json::to_string_pretty(&meta).unwrap()),
@@ -516,7 +532,7 @@ fn main() {
         }
 
         Commands::DocDel { id } => {
-            let persist = M2MPersistence::new(&cli.data_dir, true)
+            let persist = make_persistence(&cli.data_dir, &cli.backend, true)
                 .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
             match persist.soft_delete(&id) {
                 Ok(true) => println!("{}", serde_json::json!({"status": "deleted", "id": id})),
@@ -526,7 +542,7 @@ fn main() {
         }
 
         Commands::Backup { output } => {
-            let persist = M2MPersistence::new(&cli.data_dir, false)
+            let persist = make_persistence(&cli.data_dir, &cli.backend, false)
                 .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
             match persist.backup(output.to_str().unwrap_or("./backup")) {
                 Ok(path) => println!("{}", serde_json::json!({"status": "backup_ok", "path": path})),
@@ -582,7 +598,7 @@ fn main() {
             };
 
             // Load vectors and build quantized store on-the-fly
-            let persist = M2MPersistence::new(&cli.data_dir, false).ok();
+            let persist = make_persistence(&cli.data_dir, &cli.backend, false).ok();
             let vectors = if let Some(ref p) = persist {
                 p.load_vectors("default").ok().flatten()
             } else { None };
