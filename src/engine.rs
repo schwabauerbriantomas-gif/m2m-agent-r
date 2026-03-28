@@ -4,6 +4,7 @@
 //! and partial_sort for efficient top-k selection.
 
 use ndarray::{Array2, ArrayView1};
+use rayon::prelude::*;
 
 /// Result entry from expert distance computation.
 #[derive(Debug, Clone)]
@@ -55,7 +56,7 @@ impl M2MEngine {
         let q = ArrayView1::from(query);
         let distances_sq: Vec<f32> = expert_embeddings
             .outer_iter()
-            .into_iter()
+            .par_bridge()
             .map(|row: ndarray::ArrayView1<f32>| {
                 row.iter()
                     .zip(q.iter())
@@ -99,7 +100,7 @@ impl M2MEngine {
         let q = ArrayView1::from(query);
         let distances_sq: Vec<f32> = expert_embeddings
             .outer_iter()
-            .into_iter()
+            .par_bridge()
             .map(|row| {
                 row.iter()
                     .zip(q.iter())
@@ -136,7 +137,7 @@ impl M2MEngine {
         let q = ArrayView1::from(query);
         let distances_sq: Vec<f32> = expert_embeddings
             .outer_iter()
-            .into_iter()
+            .par_bridge()
             .map(|row| {
                 row.iter()
                     .zip(q.iter())
