@@ -5,7 +5,7 @@
 
 use ndarray::{Array2, ArrayView1};
 use rayon::prelude::*;
-use turbo_quant::{TurboQuantizer, PolarQuantizer, PolarCode, TurboCode};
+use crate::quant::{TurboQuantizer, PolarQuantizer, PolarCode, TurboCode};
 
 /// Quantization algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +54,15 @@ impl QuantConfig {
             projections: dim / 16,
             seed: 42,
             algorithm: QuantAlgorithm::PolarQuant,
+        }
+    }
+
+    pub fn for_compression(dim: usize) -> Self {
+        Self {
+            bits: 4,
+            projections: dim / 8,
+            seed: 42,
+            algorithm: QuantAlgorithm::TurboQuant,
         }
     }
 }

@@ -13,6 +13,7 @@ pub mod ebm;
 pub mod storage;
 pub mod splats;
 pub mod quantization;
+pub mod quant;
 pub mod memory;
 pub mod bm25_index;
 pub mod embedding_config;
