@@ -221,6 +221,9 @@ m2m-rust/
 - `simple(device)`: Edge — all heavy features OFF, 10K splats, RAM-only
 - `advanced(device)`: Agentic — TurboQuant 4-bit, HNSW secondary, auto-scaling 2-20 nodes, 1M splats
 - `finalize()`: Device auto-detection (CUDA > Vulkan > CPU)
+- `training(device)`: Embedding research — noise augmentation, Matryoshka dims, distillation, data lake
+- `distributed(device)`: Multi-node cluster — auto-scaling 3-50 nodes, MapReduce 32 chunks, 10M splats
+- `gpu(device)`: CUDA-accelerated — batch 4096, HNSW M=48, 5M splats, auto-tune
 
 ### Graph & Memory
 

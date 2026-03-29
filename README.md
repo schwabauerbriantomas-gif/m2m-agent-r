@@ -174,10 +174,13 @@ The Rust implementation should benefit from:
 ```rust
 use m2m_vector_search::config::{M2MConfig, QuantAlgorithm, SearchBackend, FusionMethod};
 
-// Three presets:
-let general  = M2MConfig::default();                       // balanced
-let edge     = M2MConfig::simple(None);                    // minimal
-let agentic  = M2MConfig::advanced(Some("cuda"));          // full power
+// Six presets:
+let general    = M2MConfig::default();                       // balanced
+let edge       = M2MConfig::simple(None);                    // minimal
+let agentic    = M2MConfig::advanced(Some("cuda"));          // full power
+let research   = M2MConfig::training(None);                  // embedding research
+let cluster    = M2MConfig::distributed(None);               // multi-node
+let gpu_accel  = M2MConfig::gpu(None);                       // CUDA-accelerated
 ```
 
 ### `M2MConfig::default()` — General Purpose
@@ -243,6 +246,62 @@ Everything enabled and tuned for autonomous agents with self-organizing memory, 
 | **Memory** | 3-tier, 1M splats | `n_splats_init=50,000`, `context=24/128/1024` |
 
 Use when: persistent AI agents, autonomous memory systems, long-running chatbots, distributed deployments. Requires ≥8GB RAM. GPU recommended for 1M+ splats.
+
+---
+
+### `M2MConfig::training(device)` — Embedding Research
+
+Optimized for training and evaluating embedding models. Disables compression (no quantization during training), enables data lake for training data management, noise augmentation, and Matryoshka representation learning.
+
+| Subsystem | Status | Key Parameters |
+|-----------|--------|---------------|
+| **Training** | ✅ 50 epochs | `batch_size=128`, `seq_length=64`, `lr=3e-4` |
+| **Noise Augmentation** | ✅ 7 levels | `[0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5]` |
+| **Matryoshka** | ✅ 5 dimensions | `[32, 64, 128, 256, 640]` |
+| **Distillation** | ✅ ON | Knowledge transfer from teacher model |
+| **Data Lake** | ✅ 10M entries | Compressed training data storage |
+| **Entity Extraction** | ✅ 2-5 grams | `min_confidence=0.3` |
+| **Quantization** | ❌ OFF | No compression during training |
+| **Graph/Semantic** | ❌ OFF | Not needed for evaluation |
+| **Search** | HRM2 moderate | `knn_k=32`, `max_splats=500,000` |
+
+Use when: developing new embedding models, fine-tuning Matryoshka representations, running noise robustness experiments, distillation from larger models.
+
+---
+
+### `M2MConfig::distributed(device)` — Multi-Node Cluster
+
+For production deployments across multiple nodes. Enables cluster coordination, sharding, load balancing, auto-scaling, and compressed inter-node communication.
+
+| Subsystem | Status | Key Parameters |
+|-----------|--------|---------------|
+| **Auto-Scaling** | ✅ 3–50 nodes | `cooldown=20s` |
+| **MapReduce** | ✅ 32 chunks | Distributed bulk indexing |
+| **Quantization** | ✅ TurboQuant 4-bit | Efficient inter-node transfer |
+| **Quality** | ✅ 97% recall | Cross-node quality monitoring |
+| **Semantic Memory** | ✅ RRF | `decay_halflife=2h` |
+| **Search** | HRM2 | `knn_k=64` |
+| **Capacity** | 10M splats | `n_splats_init=500,000` |
+| **Graph/HNSW** | ❌ OFF | Available via advanced() override |
+
+Use when: distributed search clusters, horizontal scaling, production multi-server deployments, sharded indices.
+
+---
+
+### `M2MConfig::gpu(device)` — CUDA-Accelerated Search
+
+Maximum throughput for GPU-equipped machines. Enables GPU batch operations, auto-tuning, aggressive HNSW parameters, and quantized approximate search.
+
+| Subsystem | Status | Key Parameters |
+|-----------|--------|---------------|
+| **GPU Search** | ✅ CUDA | `gpu_batch_size=4096`, `gpu_auto_tune=true` |
+| **HNSW** | ✅ Aggressive | `M=48`, `ef_construction=800`, `ef_search=200` |
+| **Quantization** | ✅ TurboQuant 4-bit | `projections=160`, `search_fraction=0.05` |
+| **Graph** | ✅ Deep | `max_neighbors=32`, `traverse_depth=5` |
+| **Search** | HRM2 high | `knn_k=256`, `hrm2_n_coarse=64`, `hrm2_n_fine=256` |
+| **Capacity** | 5M splats | `n_splats_init=100,000` |
+
+Use when: RTX 3090 or better available, batch search workloads, real-time serving with high throughput requirements. Requires NVIDIA GPU with CUDA support.
 
 ---
 
@@ -362,6 +421,30 @@ autoscale_cooldown_secs = 60.0
 [Quality Reflection]
 enable_quality_reflection = true
 quality_recall_target = 0.95
+
+[Training Mode]
+enable_training = false
+training_epochs = 10
+training_eval_interval = 100
+training_save_interval = 1000
+training_noise_augmentation = true
+training_matryoshka_dims = [64, 128, 256, 640]
+training_distillation = false
+
+[Data Lake]
+enable_data_lake = false
+data_lake_max_entries = 1_000_000
+data_lake_compress = true
+
+[Entity Extraction]
+enable_entity_extraction = true
+entity_ngram_sizes = [2, 3, 4]
+entity_min_confidence = 0.5
+
+[GPU Acceleration]
+enable_gpu_search = false
+gpu_batch_size = 1024
+gpu_auto_tune = true
 
 [API]
 rest_port = 8080
