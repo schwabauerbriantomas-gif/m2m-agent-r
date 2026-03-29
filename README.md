@@ -252,14 +252,9 @@ cargo build --release --features cuda
 cargo run --release --features cuda -- bench-gpu -n 100000 -d 640 -q 100 -k 10
 ```
 
-#### Python Reference (Not Rust)
+#### Python Reference (Not Measured)
 
-The following are from the Python prototype — included for comparison only:
-
-| Method | Latency | QPS | Speedup |
-|--------|---------|-----|---------|
-| Linear scan (Python) | 94.79 ms | 10.55 | 1x |
-| M2M HRM2 (Python) | 0.99 ms | 1,012.77 | 96x |
+No Rust-specific benchmarks are available for HRM2 retrieval. The Python prototype showed 32-96x speedups with HRM2 vs linear scan, but **these numbers do not apply to Rust** and are not included here.
 
 ## Configuration
 

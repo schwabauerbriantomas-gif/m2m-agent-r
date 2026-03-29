@@ -23,9 +23,9 @@ Custom PTX kernels compiled by `build.rs` via nvcc. Combined distance computatio
 
 ### Optimizations
 
-- **float4 vectorized loads** for D divisible by 4 (640D = 160 x float4)
+- **float4 vectorized loads** for D divisible by 4 (640D = 160 x float4 per vector)
 - **Shared memory** query caching (avoids redundant global reads)
-- **Thread-local sorted top-k** (max K=32) → shared memory merge by thread 0
+- **Thread-local sorted top-k** (max K=32) with shared memory merge by thread 0
 - **`__launch_bounds__(256)`** for optimal occupancy on sm_86
 - **`-O3 --use_fast_math`** PTX compilation flags
 
@@ -111,20 +111,7 @@ These are theoretical compression ratios based on the encoding scheme. Actual se
 
 ---
 
-## 4. Python Reference (Not Rust)
-
-For comparison only — these are from the Python prototype, NOT measured in Rust:
-
-| Method | Latency | QPS | Speedup |
-|--------|---------|-----|---------|
-| Linear scan (Python) | 94.79 ms | 10.55 | 1x |
-| M2M HRM2 (Python) | 0.99 ms | 1,012.77 | 96x vs Python linear |
-
-The Rust CPU baseline (214 QPS at 100K) is already **20x faster** than Python linear scan (10.55 QPS at 100K) before GPU acceleration.
-
----
-
-## 5. Test Coverage
+## 4. Test Coverage
 
 | Build | Tests | Notes |
 |-------|-------|-------|
@@ -141,7 +128,7 @@ All tests passing with 0 warnings.
 # CPU benchmark
 cargo run --release -- bench-gpu -n 100000 -d 640 -q 100 -k 10 -m l2
 
-# GPU benchmark (requires CUDA + MSVC)
+# GPU benchmark (requires CUDA Toolkit + MSVC)
 $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
 cargo run --release --features cuda -- bench-gpu -n 100000 -d 640 -q 100 -k 10 -m l2
 
