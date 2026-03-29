@@ -188,6 +188,99 @@ enum Commands {
     /// Show GPU/CUDA status and info
     GpuInfo,
 
+    /// Ingest dataset via DatasetTransformer (normalize + KMeans → splat centroids)
+    Ingest {
+        /// Path to .bin vector file
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Number of clusters (default: sqrt of dataset size)
+        #[arg(short, long)]
+        n_clusters: Option<usize>,
+
+        /// Random seed
+        #[arg(short, long, default_value = "42")]
+        seed: u64,
+    },
+
+    /// Ingest dataset with hierarchical 2-level KMeans
+    IngestHierarchical {
+        /// Path to .bin vector file
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Number of top-level clusters
+        #[arg(short = 'n', long, default_value = "10")]
+        n_clusters: usize,
+
+        /// Minimum cluster size before splitting
+        #[arg(short, long, default_value = "2")]
+        min_cluster_size: usize,
+
+        /// Random seed
+        #[arg(short, long, default_value = "42")]
+        seed: u64,
+    },
+
+    /// Search using all enabled backends fused (HRM2 + Quantization + HNSW + LSH)
+    FusedSearch {
+        /// Query vector as comma-separated f32 values
+        #[arg(short, long)]
+        query: String,
+
+        /// Number of neighbors
+        #[arg(short, long, default_value = "10")]
+        k: usize,
+    },
+
+    /// Show which subsystems each preset enables
+    PresetInfo {
+        /// Preset name: simple, advanced, training, distributed, gpu
+        #[arg(short, long)]
+        preset: Option<String>,
+    },
+
+    /// Search using HNSW index only
+    HnswSearch {
+        /// Query vector as comma-separated f32 values
+        #[arg(short, long)]
+        query: String,
+
+        /// Number of neighbors
+        #[arg(short, long, default_value = "10")]
+        k: usize,
+    },
+
+    /// Search using LSH index only
+    LshSearch {
+        /// Query vector as comma-separated f32 values
+        #[arg(short, long)]
+        query: String,
+
+        /// Number of neighbors
+        #[arg(short, long, default_value = "10")]
+        k: usize,
+    },
+
+    /// Benchmark GPU + DatasetTransformer: ingest + search pipeline
+    BenchGpuIngest {
+        /// Number of vectors to generate
+        #[arg(short = 'n', long, default_value = "100000")]
+        n_vectors: usize,
+
+        /// Vector dimension
+        #[arg(short = 'd', long, default_value = "640")]
+        dim: usize,
+
+        /// Number of clusters for transformer
+        #[arg(short = 'k', long, default_value = "100")]
+        n_clusters: usize,
+
+        /// Number of search queries
+        #[arg(short = 'q', long, default_value = "100")]
+        n_queries: usize,
+    },
+
     /// Benchmark GPU vs CPU search performance
     BenchGpu {
         /// Number of vectors to generate
@@ -806,6 +899,290 @@ fn main() {
                     "qps": n_queries as f64 / (cpu_ms / 1000.0),
                 },
                 "gpu": gpu_json,
+            }));
+        }
+
+        Commands::Ingest { input, n_clusters, seed } => {
+            let vectors = match load_vectors_bin(&input) {
+                Ok(v) => v,
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            };
+            eprintln!("[m2m] Ingesting {} vectors ({}D) via DatasetTransformer", vectors.nrows(), vectors.ncols());
+
+            let mut store = SplatStore::new(config);
+            let k = n_clusters.unwrap_or_else(|| (vectors.nrows() as f64).sqrt() as usize);
+            let t0 = std::time::Instant::now();
+
+            match store.ingest_with_transformer(&vectors, k, seed) {
+                Ok((n_splats, compression, stats)) => {
+                    let elapsed = t0.elapsed();
+                    store.build_index();
+                    println!("{}", serde_json::json!({
+                        "status": "ingested",
+                        "method": "kmeans",
+                        "original_count": stats.original_count,
+                        "n_splats": n_splats,
+                        "compression_ratio": (compression * 10000.0).round() / 10000.0,
+                        "transform_time_s": (stats.transform_time_s * 10000.0).round() / 10000.0,
+                        "total_ingest_ms": elapsed.as_millis() as u64,
+                        "dim": vectors.ncols(),
+                    }));
+                }
+                Err(e) => { eprintln!("Ingest error: {}", e); std::process::exit(1); }
+            }
+        }
+
+        Commands::IngestHierarchical { input, n_clusters, min_cluster_size, seed } => {
+            let vectors = match load_vectors_bin(&input) {
+                Ok(v) => v,
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            };
+            eprintln!("[m2m] Hierarchical ingest {} vectors ({}D)", vectors.nrows(), vectors.ncols());
+
+            let mut store = SplatStore::new(config);
+            let t0 = std::time::Instant::now();
+
+            match store.ingest_hierarchical(&vectors, n_clusters, min_cluster_size, seed) {
+                Ok((n_splats, compression, stats)) => {
+                    let elapsed = t0.elapsed();
+                    store.build_index();
+                    println!("{}", serde_json::json!({
+                        "status": "ingested",
+                        "method": "hierarchical_kmeans",
+                        "original_count": stats.original_count,
+                        "n_splats": n_splats,
+                        "compression_ratio": (compression * 10000.0).round() / 10000.0,
+                        "total_ingest_ms": elapsed.as_millis() as u64,
+                        "dim": vectors.ncols(),
+                    }));
+                }
+                Err(e) => { eprintln!("Ingest error: {}", e); std::process::exit(1); }
+            }
+        }
+
+        Commands::FusedSearch { query, k } => {
+            let q = match parse_query(&query) {
+                Ok(v) => v,
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            };
+            let (store, _) = load_or_create_store(&cli.data_dir, &config);
+            let t0 = std::time::Instant::now();
+            let results = store.find_neighbors_fused(&q.view(), k);
+            let elapsed = t0.elapsed();
+            let formatted = format_neighbors(&results, "json");
+            eprintln!("[m2m] Fused search: {} results in {:?}", results.len(), elapsed);
+            println!("{}", formatted);
+        }
+
+        Commands::PresetInfo { preset } => {
+            let presets = vec![
+                ("simple", M2MConfig::simple(None)),
+                ("advanced", M2MConfig::advanced(None)),
+                ("training", M2MConfig::training(None)),
+                ("distributed", M2MConfig::distributed(None)),
+                ("gpu", M2MConfig::gpu(None)),
+            ];
+
+            let filtered: Vec<_> = if let Some(ref name) = preset {
+                let lower = name.to_lowercase();
+                presets.into_iter().filter(|(n, _)| *n == lower).collect()
+            } else {
+                presets
+            };
+
+            let info: Vec<serde_json::Value> = filtered.iter().map(|(name, c)| {
+                let mut store_config = c.clone();
+                store_config.device = "cpu".to_string();
+                store_config.enable_cuda = false;
+                store_config.finalize();
+                let store = SplatStore::new(store_config);
+                serde_json::json!({
+                    "preset": name,
+                    "max_splats": c.max_splats,
+                    "latent_dim": c.latent_dim,
+                    "subsystems": {
+                        "quantization": c.enable_quantization,
+                        "hnsw": c.enable_hnsw,
+                        "lsh": c.enable_lsh,
+                        "semantic_memory": c.enable_semantic_memory,
+                        "graph": c.enable_graph,
+                        "cuda": c.enable_cuda,
+                        "gpu_search": c.enable_gpu_search,
+                    },
+                    "runtime": {
+                        "has_quantization": store.has_quantization(),
+                        "has_hnsw": store.has_hnsw(),
+                        "has_lsh": store.has_lsh(),
+                        "has_semantic_memory": store.has_semantic_memory(),
+                    },
+                })
+            }).collect();
+
+            println!("{}", serde_json::to_string_pretty(&info).unwrap());
+        }
+
+        Commands::HnswSearch { query, k } => {
+            let q = match parse_query(&query) {
+                Ok(v) => v,
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            };
+            // Load data, build with HNSW-enabled preset
+            let mut cfg = M2MConfig::advanced(None);
+            cfg.latent_dim = cli.dim;
+            cfg.max_splats = cli.max_splats;
+            cfg.device = "cpu".to_string();
+            cfg.enable_cuda = false;
+            cfg.enable_gpu_search = false;
+            cfg.finalize();
+
+            let (mut store, _) = load_or_create_store(&cli.data_dir, &cfg);
+            if !store.has_hnsw() {
+                eprintln!("HNSW not enabled. Use 'advanced' or 'gpu' preset.");
+                std::process::exit(1);
+            }
+            store.build_index();
+            let t0 = std::time::Instant::now();
+            let results = store.find_neighbors_fused(&q.view(), k);
+            let elapsed = t0.elapsed();
+            eprintln!("[m2m] HNSW search: {} results in {:?}", results.len(), elapsed);
+            println!("{}", format_neighbors(&results, "json"));
+        }
+
+        Commands::LshSearch { query, k } => {
+            let q = match parse_query(&query) {
+                Ok(v) => v,
+                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+            };
+            // Use a config with LSH enabled
+            let mut cfg = M2MConfig::default();
+            cfg.latent_dim = cli.dim;
+            cfg.max_splats = cli.max_splats;
+            cfg.enable_lsh = true;
+            cfg.device = "cpu".to_string();
+            cfg.enable_cuda = false;
+            cfg.finalize();
+
+            let (mut store, _) = load_or_create_store(&cli.data_dir, &cfg);
+            if !store.has_lsh() {
+                eprintln!("LSH not enabled.");
+                std::process::exit(1);
+            }
+            store.build_index();
+            let t0 = std::time::Instant::now();
+            let results = store.find_neighbors_fused(&q.view(), k);
+            let elapsed = t0.elapsed();
+            eprintln!("[m2m] LSH search: {} results in {:?}", results.len(), elapsed);
+            println!("{}", format_neighbors(&results, "json"));
+        }
+
+        Commands::BenchGpuIngest { n_vectors, dim, n_clusters, n_queries } => {
+            use std::time::Instant;
+
+            eprintln!("[m2m] Generating {} vectors ({}D)...", n_vectors, dim);
+            let mut rng = rand::thread_rng();
+            let raw: Vec<f32> = (0..n_vectors * dim)
+                .map(|_| rand::Rng::gen_range(&mut rng, -1.0..1.0))
+                .collect();
+            let dataset = ndarray::Array2::from_shape_vec((n_vectors, dim), raw).unwrap();
+            let queries: Vec<f32> = (0..n_queries * dim)
+                .map(|_| rand::Rng::gen_range(&mut rng, -1.0..1.0))
+                .collect();
+
+            // Phase 1: Ingest via DatasetTransformer
+            let mut ingest_cfg = M2MConfig::gpu(None);
+            ingest_cfg.latent_dim = dim;
+            ingest_cfg.max_splats = n_clusters * 2;
+            ingest_cfg.device = "cpu".to_string();
+            ingest_cfg.enable_cuda = false;
+            ingest_cfg.enable_gpu_search = false;
+            ingest_cfg.finalize();
+
+            let mut store = SplatStore::new(ingest_cfg);
+            eprintln!("[m2m] Phase 1: DatasetTransformer ingest...");
+            let t_ingest = Instant::now();
+            let (n_splats, compression, stats) = store.ingest_with_transformer(&dataset, n_clusters, 42)
+                .unwrap_or_else(|e| { eprintln!("Ingest error: {}", e); std::process::exit(1); });
+            let ingest_ms = t_ingest.elapsed().as_millis() as f64;
+
+            // Phase 2: Build index
+            eprintln!("[m2m] Phase 2: Building index...");
+            let t_build = Instant::now();
+            store.build_index();
+            let build_ms = t_build.elapsed().as_millis() as f64;
+
+            // Phase 3: Linear search on compressed splats
+            eprintln!("[m2m] Phase 3: Search {} queries against {} splats...", n_queries, n_splats);
+            let query_arr = ndarray::Array2::from_shape_vec((n_queries, dim), queries.clone()).unwrap();
+            let t_search = Instant::now();
+            for i in 0..n_queries {
+                let _ = store.find_neighbors(&query_arr.row(i), 10);
+            }
+            let search_ms = t_search.elapsed().as_millis() as f64;
+
+            // Phase 4: GPU search on raw data (comparison)
+            #[cfg(feature = "cuda")]
+            let gpu_search: Option<serde_json::Value> = {
+                if let Some(mut gpu_idx) = m2m_vector_search::gpu::cuda_kernel::GpuIndex::new() {
+                    let raw_flat: Vec<f32> = dataset.clone().into_raw_vec();
+                    eprintln!("[m2m] Phase 4: GPU search on raw {} vectors...", n_vectors);
+                    let t_gpu_upload = Instant::now();
+                    gpu_idx.upload_dataset(&raw_flat, n_vectors, dim);
+                    let gpu_upload_ms = t_gpu_upload.elapsed().as_millis() as f64;
+
+                    let t_gpu_q = Instant::now();
+                    let _ = gpu_idx.topk_search(&queries, n_queries, 10, "l2");
+                    let gpu_query_ms = t_gpu_q.elapsed().as_millis() as f64;
+                    Some(serde_json::json!({
+                        "upload_ms": gpu_upload_ms,
+                        "query_ms": gpu_query_ms,
+                        "total_ms": gpu_upload_ms + gpu_query_ms,
+                        "qps": n_queries as f64 / (gpu_query_ms / 1000.0),
+                    }))
+                } else { None }
+            };
+            #[cfg(not(feature = "cuda"))]
+            let gpu_search: Option<serde_json::Value> = None;
+
+            // Phase 5: Fused search (all backends)
+            eprintln!("[m2m] Phase 5: Fused search...");
+            let n_fused = n_queries.min(10);
+            let t_fused = Instant::now();
+            for i in 0..n_fused {
+                let _ = store.find_neighbors_fused(&query_arr.row(i), 10);
+            }
+            let fused_ms = t_fused.elapsed().as_millis() as f64;
+
+            let total_pipeline = ingest_ms + build_ms + search_ms;
+
+            println!("{}", serde_json::json!({
+                "pipeline": "gpu_transformer",
+                "config": {
+                    "n_vectors": n_vectors,
+                    "dim": dim,
+                    "n_clusters": n_clusters,
+                    "n_queries": n_queries,
+                    "dataset_mb": (n_vectors * dim * 4) as f64 / 1_048_576.0,
+                },
+                "transformer": {
+                    "original_count": stats.original_count,
+                    "n_splats": n_splats,
+                    "compression_ratio": (compression * 10000.0).round() / 10000.0,
+                    "transform_time_s": stats.transform_time_s,
+                    "total_ingest_ms": ingest_ms as u64,
+                },
+                "index_build_ms": build_ms as u64,
+                "linear_search": {
+                    "total_ms": search_ms,
+                    "per_query_us": search_ms / n_queries as f64 * 1000.0,
+                    "qps": n_queries as f64 / (search_ms / 1000.0),
+                },
+                "fused_search": {
+                    "n_queries": n_fused,
+                    "total_ms": fused_ms,
+                    "per_query_us": fused_ms / n_fused as f64 * 1000.0,
+                },
+                "gpu_raw_search": gpu_search,
+                "total_pipeline_ms": total_pipeline as u64,
             }));
         }
     }

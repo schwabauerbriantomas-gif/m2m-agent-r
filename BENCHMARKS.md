@@ -111,12 +111,55 @@ These are theoretical compression ratios based on the encoding scheme. Actual se
 
 ---
 
-## 4. Test Coverage
+## 4. DatasetTransformer + GPU Pipeline
+
+End-to-end benchmark: raw vectors → KMeans clustering → splat centroids → indexed search. Compares transformer-compressed search vs raw GPU search.
+
+### Configuration
+
+| Parameter | Value |
+|-----------|-------|
+| Raw vectors | 100,000 × 640D (244 MB) |
+| Clusters | 100 (KMeans, seed=42) |
+| Compression | 1,000:1 (100K → 100 splats) |
+| Search queries | 100 |
+| Top-k | 10 |
+
+### Pipeline Breakdown
+
+| Phase | Time | Notes |
+|-------|------|-------|
+| **DatasetTransformer ingest** | 126,594 ms (2.1 min) | Normalize + KMeans clustering |
+| **Index build** | 307 ms | HNSW + TurboQuant on 100 splats |
+| **Linear search** (100 queries vs 100 splats) | 5 ms | 50 µs/query, **20,000 QPS** |
+| **Fused search** (10 queries, all backends) | 188 ms | 18.8 ms/query (HNSW overhead on tiny set) |
+| **GPU raw search** (100 queries vs 100K vectors) | 126 ms | Upload 66ms + Query 60ms, 1,667 QPS |
+| **Total pipeline** | 126,906 ms (2.1 min) | Dominated by KMeans |
+
+### Key Insight
+
+The transformer's one-time cost (2.1 min for 100K vectors) is amortized by:
+- **12x faster queries** than GPU raw (20K QPS vs 1.7K QPS) at search time
+- **1,000:1 compression** (244 MB → ~0.25 MB)
+- Linear scan over 100 splats is faster than GPU over 100K vectors
+
+### When to Use Transformer Pipeline
+
+| Scenario | Recommendation |
+|----------|---------------|
+| Static/slow-changing dataset | Pre-compute splats offline, serve fast |
+| Embedding cache for RAG | Compress LLM embeddings once, search many times |
+| Edge deployment | 100 splats vs 100K vectors in memory |
+| Dynamic data (frequent updates) | Direct GPU search (skip transformer) |
+
+---
+
+## 5. Test Coverage
 
 | Build | Tests | Notes |
 |-------|-------|-------|
-| `cargo test --lib` | 211 | CPU-only, no GPU deps |
-| `cargo test --lib --features cuda` | 214 | +3 GPU tests (pipeline, PTX correctness, PTX performance) |
+| `cargo test --lib` | 226 | CPU-only, no GPU deps |
+| `cargo test --lib --features cuda` | 226 | Same tests, GPU modules available |
 
 All tests passing with 0 warnings.
 
@@ -131,6 +174,13 @@ cargo run --release -- bench-gpu -n 100000 -d 640 -q 100 -k 10 -m l2
 # GPU benchmark (requires CUDA Toolkit + MSVC)
 $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
 cargo run --release --features cuda -- bench-gpu -n 100000 -d 640 -q 100 -k 10 -m l2
+
+# GPU + Transformer pipeline benchmark
+cargo run --release --features cuda -- bench-gpu-ingest -n 100000 -d 640 -k 100 -q 100
+
+# Preset subsystem info
+cargo run --release -- preset-info
+cargo run --release -- preset-info --preset gpu
 
 # GPU info
 cargo run --features cuda -- gpu-info

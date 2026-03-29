@@ -96,12 +96,12 @@ git clone <repo-url> m2m-rust && cd m2m-rust
 
 # CPU-only build (no GPU deps)
 cargo build --release
-cargo test --lib                                    # 211 tests
+cargo test --lib                                    # 226 tests
 
 # CUDA build (requires CUDA Toolkit + MSVC)
 $env:CUDA_PATH = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4"
 cargo build --release --features cuda
-cargo test --lib --features cuda                    # 214 tests (3 GPU tests added)
+cargo test --lib --features cuda                    # 226 tests
 ```
 
 ### Usage
@@ -236,7 +236,7 @@ Breakdown (100K vectors, 640D, 100 queries, k=10):
 | Batch operations | rayon parallel | CUDA streams |
 | Dependencies | base (10) | + cudarc, libloading |
 | Compile time | ~5s | +PTX compilation (~2s) |
-| Tests | 211 | 214 (+3 GPU tests) |
+| Tests | 226 | 226 |
 
 #### Build Modes
 
@@ -250,7 +250,23 @@ cargo build --release --features cuda
 
 # CLI benchmark
 cargo run --release --features cuda -- bench-gpu -n 100000 -d 640 -q 100 -k 10
+
+# GPU + Transformer pipeline benchmark
+cargo run --release --features cuda -- bench-gpu-ingest -n 100000 -d 640 -k 100 -q 100
 ```
+
+#### DatasetTransformer + GPU Pipeline
+
+End-to-end: 100K raw vectors → KMeans → 100 splat centroids → indexed search.
+
+| Phase | Time | Throughput |
+|-------|------|-----------|
+| Transformer ingest (100K → 100 splats) | 2.1 min | 1,000:1 compression |
+| Index build (HNSW + TurboQuant) | 307 ms | — |
+| Linear search (100 queries vs 100 splats) | 5 ms | **20,000 QPS** |
+| GPU raw search (100 queries vs 100K vectors) | 126 ms | 1,667 QPS |
+
+**Takeaway**: After the one-time transformer cost, query throughput is 12x higher than raw GPU search.
 
 #### Python Reference (Not Measured)
 
@@ -565,21 +581,48 @@ grpc_port = 9090
 ## CLI Commands
 
 ```bash
-# GPU status and info
+# Core
+cargo run --release -- index --input vectors.bin --shard default
+cargo run --release -- search --query "0.1,0.2,..." -k 10
+cargo run --release -- search-file --input query.bin -k 10
+cargo run --release -- status --verbose
+cargo run --release -- save --shard default
+cargo run --release -- load --shard default
+cargo run --release -- list
+cargo run --release -- backup --output ./backup
+
+# DatasetTransformer
+cargo run --release -- ingest --input vectors.bin --n-clusters 100 --seed 42
+cargo run --release -- ingest-hierarchical --input vectors.bin -n 10 --min-cluster-size 2
+
+# Multi-backend search
+cargo run --release -- fused-search --query "0.1,0.2,..." -k 10
+cargo run --release -- hnsw-search --query "0.1,0.2,..." -k 10
+cargo run --release -- lsh-search --query "0.1,0.2,..." -k 10
+
+# Presets
+cargo run --release -- preset-info              # all presets
+cargo run --release -- preset-info --preset gpu  # specific preset
+
+# Quantization
+cargo run --release -- quant-index --input vectors.bin --bits 4 --algorithm turbo
+cargo run --release -- quant-search --query "0.1,0.2,..." -k 10
+cargo run --release -- quant-status
+
+# SOC / Energy
+cargo run --release -- soc-check
+cargo run --release -- soc-avalanche --seed 0
+cargo run --release -- soc-relax --iterations 10
+
+# Documents
+cargo run --release -- doc-add --id doc1 --text "..." --metadata '{"tag":"test"}'
+cargo run --release -- doc-get --id doc1
+cargo run --release -- doc-del --id doc1
+
+# GPU (requires --features cuda)
 cargo run --features cuda -- gpu-info
-# {"cuda_available":true,"device":"cuda","gpu_info":"NVIDIA GeForce RTX 3090 (sm_86), 25.8 GB total, 24.5 GB free"}
-
-# Benchmark GPU vs CPU
 cargo run --release --features cuda -- bench-gpu -n 100000 -d 640 -q 100 -k 10
-
-# Quantization status
-cargo run -- quant-status
-
-# Vector search (SplatStore)
-cargo run -- search --query "0.1,0.2,..." --top-k 10
-
-# Energy check (SOC)
-cargo run -- soc-check
+cargo run --release --features cuda -- bench-gpu-ingest -n 100000 -d 640 -k 100 -q 100
 ```
 
 ## License
