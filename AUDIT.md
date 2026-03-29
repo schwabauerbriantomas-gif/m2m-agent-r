@@ -205,6 +205,23 @@ m2m-rust/
 - Parallel encode/search with Rayon
 - Inner product estimation in compressed space
 
+**src/quant/** (5 files, ~650 lines) — Integrated turbo-quant (MIT)
+- `mod.rs`: Public re-exports (`TurboQuantizer`, `PolarQuantizer`, `PolarCode`, `TurboCode`)
+- `turbo.rs`: TurboQuant — two-stage PolarQuant + QJL residual compression
+- `polar.rs`: PolarQuant — polar coordinate encoding (angle + magnitude bins)
+- `qjl.rs`: Quantized Johnson-Lindenstrauss — random projection + unbiased inner product estimation
+- `rotation.rs`: Modified Gram-Schmidt orthogonal rotation (replaces nalgebra QR)
+- `error.rs`: Error types (no thiserror dependency)
+- Originally from github.com/RecursiveIntell/turbo-quant (MIT license)
+
+**config.rs** (467 lines) — Fully wired subsystem configuration
+- `M2MConfig`: 60+ fields covering all subsystems
+- Enums: `QuantAlgorithm`, `SearchBackend`, `FusionMethod`, `Dtype`
+- `default()`: Balanced — TurboQuant 8-bit, GraphSplat, Semantic Memory ON
+- `simple(device)`: Edge — all heavy features OFF, 10K splats, RAM-only
+- `advanced(device)`: Agentic — TurboQuant 4-bit, HNSW secondary, auto-scaling 2-20 nodes, 1M splats
+- `finalize()`: Device auto-detection (CUDA > Vulkan > CPU)
+
 ### Graph & Memory
 
 **graph_splat.rs** (307 lines)
