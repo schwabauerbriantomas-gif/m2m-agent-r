@@ -755,5 +755,48 @@ mod tests {
         assert_eq!(config.max_splats, 5_000_000);
         assert_eq!(config.knn_k, 256);
     }
+
+    /// Validate each preset can create a SplatStore and run add_splat + find_neighbors
+    #[test]
+    fn test_all_presets_runtime() {
+        use crate::splats::SplatStore;
+        use ndarray::{Array1, Array2};
+
+        let presets: Vec<(&str, M2MConfig)> = vec![
+            ("default", M2MConfig::default()),
+            ("simple", M2MConfig::simple(None)),
+            ("advanced", M2MConfig::advanced(None)),
+            ("training", M2MConfig::training(None)),
+            ("distributed", M2MConfig::distributed(None)),
+            ("gpu", M2MConfig::gpu(None)),
+        ];
+
+        for (name, mut config) in presets {
+            // Force CPU so tests work without GPU
+            config.device = "cpu".to_string();
+            config.enable_cuda = false;
+            config.enable_vulkan = false;
+            config.enable_gpu_search = false;
+            config.finalize();
+
+            let mut store = SplatStore::new(config);
+
+            // add_splat takes Array2<f32> with shape (1, dim)
+            let vec1 = Array2::from_shape_vec((1, 640), vec![0.1f32; 640]).unwrap();
+            let vec2 = Array2::from_shape_vec((1, 640), vec![0.2f32; 640]).unwrap();
+
+            let ok1 = store.add_splat(&vec1);
+            let ok2 = store.add_splat(&vec2);
+            assert!(ok1, "{name}: first add_splat should succeed");
+            assert!(ok2, "{name}: second add_splat should succeed");
+
+            store.build_index();
+
+            let query = Array1::from_vec(vec![0.1f32; 640]);
+            let results = store.find_neighbors(&query.view(), 2);
+            assert!(!results.is_empty(), "{name}: find_neighbors should return results");
+            assert_eq!(results[0].index, 0, "{name}: nearest should be vec1 (index 0)");
+        }
+    }
 }
 

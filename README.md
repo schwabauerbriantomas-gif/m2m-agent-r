@@ -249,66 +249,90 @@ Use when: persistent AI agents, autonomous memory systems, long-running chatbots
 
 ---
 
-### `M2MConfig::training(device)` — Embedding Research
+### `M2MConfig::training(device)` — Embedding Research & Model Development
 
-Optimized for training and evaluating embedding models. Disables compression (no quantization during training), enables data lake for training data management, noise augmentation, and Matryoshka representation learning.
+Starts from default, then reconfigures for model training. Disables search-heavy features (quantization, graph, semantic memory) to focus compute on training loops. Adds data lake management, noise robustness, Matryoshka multi-scale learning, and knowledge distillation.
 
-| Subsystem | Status | Key Parameters |
-|-----------|--------|---------------|
-| **Training** | ✅ 50 epochs | `batch_size=128`, `seq_length=64`, `lr=3e-4` |
-| **Noise Augmentation** | ✅ 7 levels | `[0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5]` |
-| **Matryoshka** | ✅ 5 dimensions | `[32, 64, 128, 256, 640]` |
-| **Distillation** | ✅ ON | Knowledge transfer from teacher model |
-| **Data Lake** | ✅ 10M entries | Compressed training data storage |
-| **Entity Extraction** | ✅ 2-5 grams | `min_confidence=0.3` |
-| **Quantization** | ❌ OFF | No compression during training |
-| **Graph/Semantic** | ❌ OFF | Not needed for evaluation |
-| **Search** | HRM2 moderate | `knn_k=32`, `max_splats=500,000` |
+**What you get from default**: HRM2 search, 3-tier memory, Langevin dynamics, EBM energy, SOC, MoE decoder, entity extraction, quality reflection.
 
-Use when: developing new embedding models, fine-tuning Matryoshka representations, running noise robustness experiments, distillation from larger models.
+**What changes**:
+
+| Subsystem | Default | Training | Why |
+|-----------|---------|----------|-----|
+| Quantization | ✅ 8-bit | ❌ OFF | No compression during training — raw gradients needed |
+| Graph | ✅ ON | ❌ OFF | Not relevant for model training |
+| Semantic Memory | ✅ ON | ❌ OFF | Not relevant for model training |
+| Batch Size | 32 | **128** | Larger batches for stable gradient estimates |
+| Sequence Length | 32 | **64** | Longer contexts for contrastive learning |
+| Learning Rate | 1e-4 | **3e-4** | Faster convergence with larger batches |
+| Noise Levels | 5 | **7** `[0.01..0.5]` | More augmentation for robustness testing |
+| Matryoshka Dims | `[64,128,256,640]` | **`[32,64,128,256,640]`** | Adds 32-dim for edge deployments |
+| Epochs | N/A | **50** with eval every 50 steps | Training loop active |
+| Distillation | OFF | **ON** | Compress teacher→student knowledge |
+| Data Lake | OFF | **ON** (10M entries) | Manages training datasets with compression |
+| Entity N-grams | `[2,3,4]` | **`[2,3,4,5]`** | Wider n-gram capture for metadata |
+| Entity Confidence | 0.5 | **0.3** | More permissive extraction during research |
+| Max Splats | 100K | **500K** | Room for evaluation datasets |
+
+Use when: training new embedding models, fine-tuning with noise robustness, Matryoshka representation learning, distilling large models into smaller ones, benchmarking embedding quality with `evaluate_embeddings`.
 
 ---
 
 ### `M2MConfig::distributed(device)` — Multi-Node Cluster
 
-For production deployments across multiple nodes. Enables cluster coordination, sharding, load balancing, auto-scaling, and compressed inter-node communication.
+Starts from default, then scales horizontally. Adds distributed indexing (MapReduce), auto-scaling (3–50 nodes), and aggressive compression for efficient inter-node data transfer. Keeps semantic search and quality monitoring.
 
-| Subsystem | Status | Key Parameters |
-|-----------|--------|---------------|
-| **Auto-Scaling** | ✅ 3–50 nodes | `cooldown=20s` |
-| **MapReduce** | ✅ 32 chunks | Distributed bulk indexing |
-| **Quantization** | ✅ TurboQuant 4-bit | Efficient inter-node transfer |
-| **Quality** | ✅ 97% recall | Cross-node quality monitoring |
-| **Semantic Memory** | ✅ RRF | `decay_halflife=2h` |
-| **Search** | HRM2 | `knn_k=64` |
-| **Capacity** | 10M splats | `n_splats_init=500,000` |
-| **Graph/HNSW** | ❌ OFF | Available via advanced() override |
+**What you get from default**: HRM2 search, 3-tier memory, Langevin dynamics, EBM energy, SOC, MoE, entity extraction, quantization, quality reflection.
 
-Use when: distributed search clusters, horizontal scaling, production multi-server deployments, sharded indices.
+**What changes**:
+
+| Subsystem | Default | Distributed | Why |
+|-----------|---------|-------------|-----|
+| Auto-Scaling | OFF | **3–50 nodes** (`cooldown=20s`) | Dynamically add/remove nodes by load |
+| MapReduce | 8 chunks | **32 chunks** | Parallel indexing across nodes |
+| Quantization | 8-bit | **4-bit** | Smaller payloads between nodes |
+| Search Fraction | 0.1 | **0.2** | Re-rank more candidates from shard merges |
+| Quality Target | 95% | **97%** | Higher bar for distributed recall |
+| Semantic Decay | 24h | **2h** | Faster staleness detection in distributed setting |
+| Max Splats | 100K | **10M** | Sharded across nodes |
+| Init Splats | 10K | **500K** | Pre-allocate for large datasets |
+| Graph | ✅ ON | ✅ ON (inherited) | Cross-node graph traversal |
+
+**What's NOT included** (available via `advanced()`): HNSW secondary index, deep graph traversal, 1M+ per-node capacity, auto-scaling with aggressive compression.
+
+Use when: deploying across 3+ servers, horizontal scaling for production, sharding large indices, load-balanced search clusters.
 
 ---
 
-### `M2MConfig::gpu(device)` — CUDA-Accelerated Search
+### `M2MConfig::gpu(device)` — GPU-Accelerated Full Pipeline
 
-Maximum throughput for GPU-equipped machines. Enables GPU batch operations, auto-tuning, aggressive HNSW parameters, and quantized approximate search.
+Starts from advanced (everything ON), then adds GPU acceleration. This is the most complete preset — all features from advanced plus CUDA batch operations, GPU auto-tuning, and aggressive HNSW for GPU memory hierarchies.
 
-| Subsystem | Status | Key Parameters |
-|-----------|--------|---------------|
-| **GPU Search** | ✅ CUDA | `gpu_batch_size=4096`, `gpu_auto_tune=true` |
-| **HNSW** | ✅ Aggressive | `M=48`, `ef_construction=800`, `ef_search=200` |
-| **Quantization** | ✅ TurboQuant 4-bit | `projections=160`, `search_fraction=0.05` |
-| **Graph** | ✅ Deep | `max_neighbors=32`, `traverse_depth=5` |
-| **Search** | HRM2 high | `knn_k=256`, `hrm2_n_coarse=64`, `hrm2_n_fine=256` |
-| **Capacity** | 5M splats | `n_splats_init=100,000` |
+**What you get from advanced**: TurboQuant 4-bit, GraphSplat deep, Semantic Memory RRF, HNSW, MapReduce, auto-scaling, quality 99%, EBM, Langevin, 3-tier memory, MoE.
 
-Use when: RTX 3090 or better available, batch search workloads, real-time serving with high throughput requirements. Requires NVIDIA GPU with CUDA support.
+**What GPU adds on top**:
+
+| Subsystem | Advanced | GPU | Why |
+|-----------|----------|-----|-----|
+| Device | configurable | **CUDA mandatory** | GPU is the point |
+| GPU Search | OFF | **ON** (`batch=4096`, auto-tune) | Batch distance on GPU, 10-100x throughput |
+| HNSW M | 32 | **48** | More neighbors = better recall at GPU speed |
+| HNSW ef_construction | 400 | **800** | GPU can afford higher build cost |
+| HNSW ef_search | 100 | **200** | GPU searches faster, can explore more |
+| Quant Projections | 80 | **160** | More projections for better compression at scale |
+| Search Fraction | 0.2 | **0.05** | GPU re-ranks faster, can afford fewer candidates |
+| Graph Neighbors | 20 | **32** | Larger graph = richer context |
+| KNN k | 128 | **256** | More results per query |
+| HRM2 Coarse/Fine | 32/128 | **64/256** | Finer granularity for 5M splats |
+| HRM2 Probe | 8 | **16** | More clusters probed |
+| Max Splats | 1M | **5M** | GPU memory handles more |
+| Init Splats | 50K | **100K** | Pre-allocate for GPU |
+
+Use when: RTX 3090 or better available, real-time serving, batch search at scale, production with GPU. This preset subsumes advanced — use it instead of advanced when you have CUDA.
 
 ---
 
 ### All Configurable Fields
-
-<details>
-<summary>Full field reference (click to expand)</summary>
 
 ```toml
 [System]
@@ -450,8 +474,6 @@ gpu_auto_tune = true
 rest_port = 8080
 grpc_port = 9090
 ```
-
-</details>
 
 ## License
 
