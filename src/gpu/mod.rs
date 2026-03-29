@@ -239,4 +239,123 @@ mod tests {
         let info = gpu_info().expect("GPU info should be available");
         assert!(info.contains("GB"));
     }
+
+    /// Test that custom PTX kernels produce identical results to CPU computation.
+    /// This validates the GPU compute path (not just upload/download).
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn test_ptx_kernel_correctness() {
+        use cuda_kernel::GpuIndex;
+
+        if !is_cuda_available() {
+            return;
+        }
+
+        let dim = 640;
+        let n = 500;
+
+        // Generate deterministic dataset
+        let mut dataset = vec![0.0f32; n * dim];
+        let mut state = 42u64;
+        for val in dataset.iter_mut() {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *val = ((state >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0;
+        }
+        let query = vec![0.5f32; dim];
+
+        // CPU ground truth
+        let cpu_l2: Vec<f32> = (0..n)
+            .map(|i| {
+                let row = &dataset[i * dim..(i + 1) * dim];
+                query.iter().zip(row.iter()).map(|(a, b)| (a - b).powi(2)).sum()
+            })
+            .collect();
+
+        let q_norm: f32 = query.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let cpu_cos: Vec<f32> = (0..n)
+            .map(|i| {
+                let row = &dataset[i * dim..(i + 1) * dim];
+                let dot: f32 = query.iter().zip(row.iter()).map(|(a, b)| a * b).sum();
+                let r_norm: f32 = row.iter().map(|x| x * x).sum::<f32>().sqrt();
+                1.0 - dot / (q_norm * r_norm)
+            })
+            .collect();
+
+        // GPU via GpuIndex (should use PTX kernels if available)
+        let mut idx = GpuIndex::new().expect("CUDA context failed");
+        assert!(idx.upload_dataset(&dataset, n, dim));
+
+        // Test single L2
+        let gpu_l2 = idx.l2_distances(&query).expect("L2 distances failed");
+        assert_eq!(gpu_l2.len(), cpu_l2.len());
+
+        // Verify GPU matches CPU within floating point tolerance
+        for (gpu, cpu) in gpu_l2.iter().zip(cpu_l2.iter()) {
+            let diff = (gpu - cpu).abs();
+            assert!(diff < 1e-2, "L2 mismatch: GPU={} CPU={} diff={}", gpu, cpu, diff);
+        }
+
+        // Test cosine
+        let gpu_cos = idx.cosine_distances(&query).expect("Cosine distances failed");
+        for (gpu, cpu) in gpu_cos.iter().zip(cpu_cos.iter()) {
+            let diff = (gpu - cpu).abs();
+            assert!(diff < 1e-2, "Cosine mismatch: GPU={} CPU={} diff={}", gpu, cpu, diff);
+        }
+    }
+
+    /// Benchmark: PTX kernel vs CPU-only for 10K vectors.
+    /// Only meaningful on machines with GPU.
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn test_ptx_kernel_performance() {
+        use std::time::Instant;
+        use cuda_kernel::GpuIndex;
+
+        if !is_cuda_available() {
+            return;
+        }
+
+        let dim = 640;
+        let n = 10_000;
+        let n_queries = 100;
+
+        let mut dataset = vec![0.0f32; n * dim];
+        let mut state = 12345u64;
+        for val in dataset.iter_mut() {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            *val = ((state >> 33) as f32) / (u32::MAX as f32) * 2.0 - 1.0;
+        }
+        let queries = vec![0.3f32; n_queries * dim];
+
+        // CPU benchmark
+        let t0 = Instant::now();
+        for q in 0..n_queries {
+            let q_slice = &queries[q * dim..(q + 1) * dim];
+            let mut _dists: Vec<f32> = (0..n)
+                .map(|i| {
+                    let row = &dataset[i * dim..(i + 1) * dim];
+                    q_slice.iter().zip(row.iter()).map(|(a, b)| (a - b).powi(2)).sum()
+                })
+                .collect();
+        }
+        let cpu_ms = t0.elapsed().as_millis();
+
+        // GPU benchmark with persistent index
+        let mut idx = GpuIndex::new().expect("CUDA context failed");
+        assert!(idx.upload_dataset(&dataset, n, dim));
+
+        let t1 = Instant::now();
+        let gpu_batch = idx.batch_l2_distances(&queries, n_queries).expect("batch L2 failed");
+        let gpu_ms = t1.elapsed().as_millis();
+        assert_eq!(gpu_batch.len(), n_queries);
+        assert_eq!(gpu_batch[0].len(), n);
+
+        eprintln!(
+            "[m2m benchmark] 10K x 640D, {} queries | CPU: {}ms | GPU: {}ms | speedup: {:.2}x",
+            n_queries,
+            cpu_ms,
+            gpu_ms,
+            cpu_ms as f64 / gpu_ms.max(1) as f64
+        );
+    }
 }
