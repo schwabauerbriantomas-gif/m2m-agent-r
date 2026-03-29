@@ -173,6 +173,30 @@ pub struct M2MConfig {
     // --- Quality Reflection ---
     pub enable_quality_reflection: bool,
     pub quality_recall_target: f64,
+
+    // --- Training Configuration ---
+    pub enable_training: bool,
+    pub training_epochs: usize,
+    pub training_eval_interval: usize,
+    pub training_save_interval: usize,
+    pub training_noise_augmentation: bool,
+    pub training_matryoshka_dims: Vec<usize>,
+    pub training_distillation: bool,
+
+    // --- Data Lake ---
+    pub enable_data_lake: bool,
+    pub data_lake_max_entries: usize,
+    pub data_lake_compress: bool,
+
+    // --- Entity Extraction ---
+    pub enable_entity_extraction: bool,
+    pub entity_ngram_sizes: Vec<usize>,
+    pub entity_min_confidence: f64,
+
+    // --- GPU Acceleration ---
+    pub enable_gpu_search: bool,
+    pub gpu_batch_size: usize,
+    pub gpu_auto_tune: bool,
 }
 
 /// Dtype enum to represent numpy-style data types
@@ -319,6 +343,30 @@ impl Default for M2MConfig {
             // Quality
             enable_quality_reflection: true,
             quality_recall_target: 0.95,
+
+            // Training
+            enable_training: false,
+            training_epochs: 10,
+            training_eval_interval: 100,
+            training_save_interval: 1000,
+            training_noise_augmentation: true,
+            training_matryoshka_dims: vec![64, 128, 256, 640],
+            training_distillation: false,
+
+            // Data Lake
+            enable_data_lake: false,
+            data_lake_max_entries: 1_000_000,
+            data_lake_compress: true,
+
+            // Entity Extraction
+            enable_entity_extraction: true,
+            entity_ngram_sizes: vec![2, 3, 4],
+            entity_min_confidence: 0.5,
+
+            // GPU
+            enable_gpu_search: false,
+            gpu_batch_size: 1024,
+            gpu_auto_tune: true,
         }
     }
 }
@@ -472,6 +520,146 @@ impl M2MConfig {
 
         config
     }
+
+    /// Creates a 'Training' configuration for embedding model research.
+    ///
+    /// Enables training loops, evaluation, data lake ingestion, noise augmentation,
+    /// and Matryoshka representation learning. Search features are secondary.
+    pub fn training(device: Option<&str>) -> Self {
+        let mut config = Self::default();
+
+        if let Some(d) = device {
+            config.device = d.to_string();
+        }
+
+        // Training enabled
+        config.enable_training = true;
+        config.training_epochs = 50;
+        config.training_eval_interval = 50;
+        config.training_save_interval = 500;
+        config.training_noise_augmentation = true;
+        config.training_matryoshka_dims = vec![32, 64, 128, 256, 640];
+        config.training_distillation = true;
+
+        // Data Lake for training data management
+        config.enable_data_lake = true;
+        config.data_lake_max_entries = 10_000_000;
+        config.data_lake_compress = true;
+
+        // Entity extraction for metadata enrichment
+        config.enable_entity_extraction = true;
+        config.entity_ngram_sizes = vec![2, 3, 4, 5];
+        config.entity_min_confidence = 0.3;
+
+        // Search features at moderate capacity for evaluation
+        config.enable_quantization = false; // No compression during training
+        config.enable_graph = false;
+        config.enable_semantic_memory = false;
+        config.max_splats = 500_000;
+        config.n_splats_init = 50_000;
+        config.knn_k = 32;
+        config.hrm2_n_coarse = 16;
+        config.hrm2_n_fine = 64;
+
+        // Larger training batches and sequences
+        config.batch_size = 128;
+        config.seq_length = 64;
+        config.learning_rate = 3e-4;
+        config.noise_levels = vec![0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.5];
+
+        config
+    }
+
+    /// Creates a 'Distributed' configuration for multi-node cluster deployments.
+    ///
+    /// Enables cluster modules (router, balancer, sharding), auto-scaling,
+    /// MapReduce indexing, and inter-node communication.
+    pub fn distributed(device: Option<&str>) -> Self {
+        let mut config = Self::default();
+
+        if let Some(d) = device {
+            config.device = d.to_string();
+        }
+
+        // Cluster and distributed features
+        config.enable_auto_scaling = true;
+        config.autoscale_min_nodes = 3;
+        config.autoscale_max_nodes = 50;
+        config.autoscale_cooldown_secs = 20.0;
+
+        // MapReduce for distributed indexing
+        config.enable_mapreduce = true;
+        config.mapreduce_n_chunks = 32;
+
+        // Compression for inter-node transfer efficiency
+        config.enable_quantization = true;
+        config.quant_algorithm = QuantAlgorithm::TurboQuant;
+        config.quant_bits = 4;
+        config.quant_projections = 80;
+        config.quant_search_fraction = 0.15;
+
+        // Quality monitoring across nodes
+        config.enable_quality_reflection = true;
+        config.quality_recall_target = 0.97;
+
+        // Large scale
+        config.max_splats = 10_000_000;
+        config.n_splats_init = 500_000;
+        config.knn_k = 64;
+
+        // Semantic search for cross-node queries
+        config.enable_semantic_memory = true;
+        config.semantic_fusion = FusionMethod::Rrf;
+        config.semantic_decay_halflife = 7200.0; // 2 hours
+
+        config
+    }
+
+    /// Creates a 'GPU' configuration for CUDA-accelerated search.
+    ///
+    /// Enables GPU search backends, auto-tuning, and large batch operations.
+    /// Falls back to CPU if no GPU is available.
+    pub fn gpu(device: Option<&str>) -> Self {
+        let mut config = Self::default();
+
+        config.device = device.unwrap_or("cuda").to_string();
+        config.enable_cuda = true;
+        config.enable_vulkan = false;
+
+        // GPU search acceleration
+        config.enable_gpu_search = true;
+        config.gpu_batch_size = 4096;
+        config.gpu_auto_tune = true;
+
+        // HNSW on GPU for high-throughput ANN
+        config.enable_hnsw = true;
+        config.hnsw_m = 48;
+        config.hnsw_ef_construction = 800;
+        config.hnsw_ef_search = 200;
+
+        // Full quantization pipeline
+        config.enable_quantization = true;
+        config.quant_algorithm = QuantAlgorithm::TurboQuant;
+        config.quant_bits = 4;
+        config.quant_projections = 160;
+        config.quant_search_fraction = 0.05;
+
+        // Graph and semantic at scale
+        config.enable_graph = true;
+        config.graph_max_neighbors = 32;
+        config.graph_traverse_depth = 5;
+        config.enable_semantic_memory = true;
+
+        // Large capacity with GPU memory
+        config.max_splats = 5_000_000;
+        config.n_splats_init = 100_000;
+        config.knn_k = 256;
+        config.hrm2_n_coarse = 64;
+        config.hrm2_n_fine = 256;
+        config.hrm2_n_probe = 16;
+
+        config
+    }
 }
 
 #[cfg(test)]
@@ -530,4 +718,42 @@ mod tests {
         config.finalize();
         assert!(config.enable_cuda);
     }
+
+    #[test]
+    fn test_training_config() {
+        let config = M2MConfig::training(None);
+        assert!(config.enable_training);
+        assert!(config.enable_data_lake);
+        assert!(config.training_distillation);
+        assert!(config.training_noise_augmentation);
+        assert!(!config.enable_quantization); // No compression during training
+        assert_eq!(config.batch_size, 128);
+        assert_eq!(config.training_epochs, 50);
+        assert!(config.training_matryoshka_dims.contains(&640));
+    }
+
+    #[test]
+    fn test_distributed_config() {
+        let config = M2MConfig::distributed(None);
+        assert!(config.enable_auto_scaling);
+        assert!(config.enable_mapreduce);
+        assert!(config.enable_quantization);
+        assert_eq!(config.max_splats, 10_000_000);
+        assert_eq!(config.autoscale_max_nodes, 50);
+        assert_eq!(config.mapreduce_n_chunks, 32);
+    }
+
+    #[test]
+    fn test_gpu_config() {
+        let config = M2MConfig::gpu(None);
+        assert!(config.enable_cuda);
+        assert!(config.enable_gpu_search);
+        assert!(config.enable_hnsw);
+        assert!(config.enable_quantization);
+        assert_eq!(config.device, "cuda");
+        assert_eq!(config.gpu_batch_size, 4096);
+        assert_eq!(config.max_splats, 5_000_000);
+        assert_eq!(config.knn_k, 256);
+    }
 }
+
