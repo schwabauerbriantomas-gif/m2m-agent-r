@@ -41,6 +41,7 @@ pub mod train_embeddings;
 pub mod cluster;
 pub mod api;
 pub mod loaders;
+pub mod gpu;
 
 pub use config::M2MConfig;
 pub use geometry::{normalize_sphere, geodesic_distance};

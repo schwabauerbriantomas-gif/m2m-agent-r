@@ -5,6 +5,10 @@ edition = "2021"
 description = "M2M Vector Search - Native Rust implementation"
 license = "AGPL-3.0"
 
+[features]
+default = []
+cuda = ["cudarc"]
+
 [dependencies]
 ndarray = { version = "0.16", features = ["serde"] }
 rayon = "1"
@@ -16,6 +20,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
+cudarc = { version = "0.19", features = ["cuda-12040"], optional = true }
 
 [dev-dependencies]
 approx = "0.5"
