@@ -4,7 +4,7 @@
 //! Designed for small-to-medium collections (~1-10K docs).
 //! Ported from m2m-vector-search Python.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use regex::Regex;
 

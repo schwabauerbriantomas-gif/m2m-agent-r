@@ -6,7 +6,6 @@
 //!
 //! License: MIT (adapted from github.com/RecursiveIntell/turbo-quant)
 
-use ndarray::{Array1, Array2};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Distribution, StandardNormal};

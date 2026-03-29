@@ -72,7 +72,7 @@ impl GaussianGraphStore {
     }
 
     /// Add an entity node (with name deduplication).
-    pub fn add_entity(&mut self, name: &str, embedding: &[f32], entity_type: &str) -> usize {
+    pub fn add_entity(&mut self, name: &str, embedding: &[f32], __entity_type: &str) -> usize {
         let key = name.to_lowercase();
         if let Some(&id) = self.entity_name_index.get(&key) { return id; }
 

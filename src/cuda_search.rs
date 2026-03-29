@@ -3,7 +3,7 @@
 //! Interface ready for GPU backend via cudarc/cust.
 //! Ported from m2m-vector-search Python.
 
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2, s};
+use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
 
 /// Search metric type.
 #[derive(Debug, Clone, Copy)]
@@ -190,7 +190,7 @@ pub struct CudaSearch {
 }
 
 impl CudaSearch {
-    pub fn new(dim: usize, metric: Metric) -> Self {
+    pub fn new(_dim: usize, metric: Metric) -> Self {
         Self { searcher: None, metric }
     }
 
@@ -271,7 +271,7 @@ mod tests {
             [0.0, 0.0, 1.0],
             [1.0, 1.0, 0.0],
             [0.0, 1.0, 1.0],
-        ].into_shape((5, 3)).unwrap()
+        ].into_shape_with_order((5, 3)).unwrap()
     }
 
     #[test]
@@ -327,7 +327,7 @@ mod tests {
         let data = make_data();
         let mut searcher = BruteForceSearcher::new(data.view(), Metric::Cosine);
         assert_eq!(searcher.n_vectors(), 5);
-        let small = array![[1.0, 0.0], [0.0, 1.0]].into_shape((2, 2)).unwrap();
+        let small = array![[1.0, 0.0], [0.0, 1.0]].into_shape_with_order((2, 2)).unwrap();
         searcher.rebuild(small.view());
         assert_eq!(searcher.n_vectors(), 2);
     }

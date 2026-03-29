@@ -76,6 +76,7 @@ pub struct RouteQueryResponse {
 // ─── Coordinator API Handler ───
 
 /// Coordinator API: manages cluster nodes, routing, and shard assignment.
+#[allow(dead_code)]
 pub struct CoordinatorApi {
     nodes: HashMap<String, NodeState>,
     shard_assignments: HashMap<String, String>, // shard_id -> node_id

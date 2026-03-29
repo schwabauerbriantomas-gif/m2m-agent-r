@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 /// Node energy state for routing decisions.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct NodeEnergy {
     node_id: String,
     last_energy: f64,

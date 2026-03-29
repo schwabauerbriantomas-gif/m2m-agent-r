@@ -173,7 +173,7 @@ impl SemanticMemoryDB {
         if self.fusion_method != FusionMethod::Bm25Only {
             let query_vec = self.encode_text(query)?;
             let results = self.store.find_neighbors(&query_vec.view(), k * 3);
-            for (i, r) in results.iter().enumerate() {
+            for (_i, r) in results.iter().enumerate() {
                 let doc_id = format!("vec_{}", r.index);
                 if self.deleted.contains(&doc_id) { continue; }
                 let score = 1.0 - r.distance;

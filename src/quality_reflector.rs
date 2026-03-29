@@ -42,6 +42,7 @@ const MAX_HISTORY: usize = 200;
 const DEGRADATION_WINDOW: usize = 10;
 
 /// Quality reflector for M2M search results.
+#[allow(dead_code)]
 pub struct QualityReflector {
     precision_warning: f64,
     precision_critical: f64,

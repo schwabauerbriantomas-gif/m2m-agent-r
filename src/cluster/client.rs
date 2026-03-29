@@ -4,7 +4,6 @@
 
 use std::collections::HashMap;
 
-use crate::cluster::aggregator::ResultAggregator;
 use crate::cluster::router::ClusterRouter;
 use crate::cluster::sharding::shard_by_hash;
 

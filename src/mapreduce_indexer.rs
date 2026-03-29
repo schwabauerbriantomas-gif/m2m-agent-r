@@ -133,7 +133,7 @@ impl MapReduceIndexer {
         let n_fine_clusters = n_coarse_clusters * self.config.n_fine_per_coarse;
 
         // Merge coarse centers from all chunks
-        let mut all_coarse: Vec<Vec<f32>> = chunk_results.iter()
+        let all_coarse: Vec<Vec<f32>> = chunk_results.iter()
             .flat_map(|r| r.coarse_centers.iter().cloned())
             .collect();
 

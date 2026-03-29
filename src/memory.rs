@@ -8,7 +8,7 @@
 //! Ported from m2m-vector-search Python.
 
 use std::collections::HashMap;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::splat_types::GaussianSplat;
 
@@ -219,7 +219,7 @@ impl SplatMemoryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::Array2;
+
 
     fn make_splat(id: u64) -> GaussianSplat {
         GaussianSplat {

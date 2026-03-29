@@ -79,6 +79,7 @@ const BATCH_MIN_SIZE: usize = 4;
 const EXACT_MAX_DATASET: usize = 5000;
 
 /// Query router for M2M.
+#[allow(dead_code)]
 pub struct QueryRouter {
     default_strategy: SearchStrategy,
     enable_auto_learning: bool,

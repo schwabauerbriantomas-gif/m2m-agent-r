@@ -2,7 +2,6 @@
 //! Find high-uncertainty regions, sample uncertain points, suggest exploration.
 //! Ported from m2m-vector-search Python.
 
-use std::collections::HashMap;
 
 /// A region in energy space.
 #[derive(Debug, Clone)]
@@ -298,6 +297,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn make_exploration() -> EbmExploration<DefaultEnergyFn> {
         let vectors: Vec<Vec<f32>> = (0..20).map(|i| vec![i as f32 * 0.1, 0.0]).collect();
         let ids: Vec<String> = (0..20).map(|i| format!("v{}", i)).collect();

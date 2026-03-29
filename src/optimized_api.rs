@@ -3,9 +3,8 @@
 //! Integrates query caching, prefetching, and metrics tracking.
 //! Ported from m2m-vector-search Python.
 
-use ndarray::{Array1, Array2};
+use ndarray::Array1;
 use serde::Serialize;
-use std::collections::HashMap;
 
 use crate::query_optimizer::QueryOptimizer;
 

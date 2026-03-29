@@ -5,7 +5,6 @@
 //! Automatic fallback on errors.
 //! Ported from m2m-vector-search Python.
 
-use ndarray::Array1;
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -70,6 +69,7 @@ const MODERATE_K_THRESHOLD: usize = 100;
 const MODERATE_DATASET_THRESHOLD: usize = 100_000;
 
 /// Search supervisor for multi-backend orchestration.
+#[allow(dead_code)]
 pub struct SearchSupervisor {
     default_backend: BackendType,
     latency_budget_ms: Option<f64>,

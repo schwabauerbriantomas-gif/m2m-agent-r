@@ -78,31 +78,45 @@ pub fn geodesic_distance_batch(x: &Array2<f32>, y: &Array2<f32>) -> Array1<f32> 
         .collect()
 }
 
-/// Exponential map on sphere.
-/// 
-/// Currently returns identity (simplified implementation matching Python).
-/// TODO: Implement proper exponential map for hypersphere.
-#[inline(always)]
-pub fn exp_map<T: std::clone::Clone>(x: T) -> T {
-    x
+/// Exponential map on the unit hypersphere.
+///
+/// Maps a tangent vector `v` at point `x` on the unit sphere back to the sphere.
+/// Formula: exp_x(v) = cos(||v||) * x + sin(||v||) * v/||v||
+/// For the zero vector, returns x unchanged.
+pub fn exp_map(x: &ArrayView1<f32>, v: &ArrayView1<f32>) -> Array1<f32> {
+    let v_norm = v.dot(v).sqrt();
+    if v_norm < 1e-10 {
+        return x.to_owned();
+    }
+    let cos_t = v_norm.cos();
+    let sin_t = v_norm.sin();
+    x.mapv(|xi| xi * cos_t) + v.mapv(|vi| vi * (sin_t / v_norm))
 }
 
-/// Logarithmic map on sphere.
-/// 
-/// Currently returns identity (simplified implementation matching Python).
-/// TODO: Implement proper logarithmic map for hypersphere.
-#[inline(always)]
-pub fn log_map<T: std::clone::Clone>(x: T) -> T {
-    x
+/// Logarithmic map on the unit hypersphere.
+///
+/// Maps point `y` on the sphere to a tangent vector at `x`.
+/// Formula: log_x(y) = d/||v_perp|| * v_perp, where d = arccos(x.y), v_perp = y - (x.y)*x
+pub fn log_map(x: &ArrayView1<f32>, y: &ArrayView1<f32>) -> Array1<f32> {
+    let dot = x.dot(y).min(1.0).max(-1.0);
+    let d = dot.acos();
+    if d < 1e-10 {
+        return Array1::zeros(x.len());
+    }
+    let v_perp = y - &x.mapv(|xi| xi * dot);
+    let v_perp_norm = v_perp.dot(&v_perp).sqrt();
+    if v_perp_norm < 1e-10 {
+        return Array1::zeros(x.len());
+    }
+    v_perp.mapv(|vi| vi * (d / v_perp_norm))
 }
 
-/// Project vector to tangent space.
-/// 
-/// Currently returns identity (simplified implementation matching Python).
-/// TODO: Implement proper tangent space projection.
-#[inline(always)]
-pub fn project_to_tangent<T: std::clone::Clone>(v: T) -> T {
-    v
+/// Project vector `v` onto the tangent space of the unit sphere at `x`.
+///
+/// Removes the component of `v` parallel to `x`: v_perp = v - (v.x) * x
+pub fn project_to_tangent(x: &ArrayView1<f32>, v: &ArrayView1<f32>) -> Array1<f32> {
+    let dot = v.dot(x);
+    v - &x.mapv(|xi| xi * dot)
 }
 
 /// Compute pairwise cosine similarity matrix.
@@ -191,10 +205,42 @@ mod tests {
     }
 
     #[test]
-    fn test_identity_maps() {
-        let x = array![1.0_f32, 2.0_f32, 3.0_f32];
-        assert_eq!(exp_map(x.clone()), x);
-        assert_eq!(log_map(x.clone()), x);
-        assert_eq!(project_to_tangent(x.clone()), x);
+    fn test_exp_map() {
+        let x = array![1.0_f32, 0.0_f32, 0.0_f32];
+        let v = array![0.0_f32, 0.1_f32, 0.0_f32];
+        let result = exp_map(&x.view(), &v.view());
+        // exp_x(v) should stay on unit sphere: ||result|| ≈ 1
+        let norm = result.dot(&result).sqrt();
+        assert_relative_eq!(norm, 1.0_f32, epsilon = 1e-4);
+        // Zero tangent vector should return x unchanged
+        let zero = array![0.0_f32, 0.0_f32, 0.0_f32];
+        let result_z = exp_map(&x.view(), &zero.view());
+        assert_relative_eq!(result_z[0], 1.0_f32, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_log_map() {
+        let x = array![1.0_f32, 0.0_f32, 0.0_f32];
+        let y = array![0.0_f32, 1.0_f32, 0.0_f32];
+        let result = log_map(&x.view(), &y.view());
+        // log_x(x) should be zero
+        let result_same = log_map(&x.view(), &x.view());
+        assert_relative_eq!(result_same.dot(&result_same).sqrt(), 0.0_f32, epsilon = 1e-6);
+        // log_x(y) should be perpendicular to x
+        let dot = result.dot(&x);
+        assert_relative_eq!(dot, 0.0_f32, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_project_to_tangent() {
+        let x = array![1.0_f32, 0.0_f32, 0.0_f32];
+        let v = array![1.0_f32, 1.0_f32, 0.0_f32];
+        let result = project_to_tangent(&x.view(), &v.view());
+        // Tangent projection should be perpendicular to x
+        let dot = result.dot(&x);
+        assert_relative_eq!(dot, 0.0_f32, epsilon = 1e-6);
+        // Should remove x-parallel component
+        assert_relative_eq!(result[0], 0.0_f32, epsilon = 1e-6);
+        assert_relative_eq!(result[1], 1.0_f32, epsilon = 1e-6);
     }
 }

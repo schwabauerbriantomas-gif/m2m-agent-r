@@ -9,6 +9,7 @@ use crate::cluster::energy_router::{EnergyRouter, EnergyRouterConfig};
 use crate::cluster::health::{EdgeNodeInfo, LoadMetrics};
 
 /// Unified cluster router.
+#[allow(dead_code)]
 pub struct ClusterRouter {
     edge_nodes: HashMap<String, EdgeNodeInfo>,
     metadata_index: HashMap<String, HashSet<String>>,
@@ -102,7 +103,7 @@ impl ClusterRouter {
     }
 
     /// Route a query to appropriate edge nodes.
-    pub fn route_query(&mut self, query: &[f32], k: usize, strategy: &str) -> Vec<String> {
+    pub fn route_query(&mut self, query: &[f32], _k: usize, strategy: &str) -> Vec<String> {
         let online_edges = self.get_online_edges();
         if online_edges.is_empty() {
             return Vec::new();

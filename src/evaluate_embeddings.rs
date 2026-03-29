@@ -310,11 +310,11 @@ mod tests {
         // 10 embeddings: 5 similar, 5 different
         let mut data = Vec::new();
         let mut labels = Vec::new();
-        for i in 0..5 {
+        for _i in 0..5 {
             data.extend([1.0, 0.0, 0.0]); // cluster A
             labels.push("A".to_string());
         }
-        for i in 0..5 {
+        for _i in 0..5 {
             data.extend([0.0, 1.0, 0.0]); // cluster B
             labels.push("B".to_string());
         }

@@ -6,7 +6,6 @@
 //! This module provides the training pipeline, dataset generation, and evaluation.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Training configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

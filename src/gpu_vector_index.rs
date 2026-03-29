@@ -7,7 +7,7 @@
 //!   - Query Buffer: [B x D] per batch call
 //!   - Result Buffer: [B x N] distances read after computation
 
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use ndarray::{Array1, Array2, ArrayView2};
 
 use crate::cuda_search::{BruteForceSearcher, Metric, SearchResult};
 
@@ -68,7 +68,7 @@ impl GpuVectorIndex {
     }
 
     /// Create with default config.
-    pub fn with_dim(dim: usize) -> Self {
+    pub fn with_dim(_dim: usize) -> Self {
         Self::new(GpuIndexConfig { backend: GpuBackend::Cpu, metric: Metric::L2, ..Default::default() })
     }
 
@@ -96,16 +96,16 @@ impl GpuVectorIndex {
 
         // Concatenate existing + new
         let new_total = self.n_vectors + new_vectors.nrows();
-        let mut combined = Array2::<f32>::zeros((new_total, self.dim));
+        let _combined = Array2::<f32>::zeros((new_total, self.dim));
 
-        if let Some(ref searcher) = self.searcher {
+        if let Some(ref _searcher) = self.searcher {
             // Copy existing data (would need accessor on BruteForceSearcher)
             // For simplicity, rebuild
         }
 
         // Rebuild with full dataset
         // Note: in GPU version, this would upload to GPU once
-        if let Some(ref mut searcher) = self.searcher {
+        if let Some(ref _searcher) = self.searcher {
             // Access index directly isn't possible in this design,
             // so we store the raw data too
         }
@@ -246,7 +246,7 @@ mod tests {
             [0.0, 0.0, 1.0],
             [0.9, 0.1, 0.0],
             [0.0, 0.9, 0.1],
-        ].into_shape((5, 3)).unwrap()
+        ].into_shape_with_order((5, 3)).unwrap()
     }
 
     #[test]

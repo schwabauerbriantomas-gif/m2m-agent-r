@@ -150,9 +150,11 @@ impl EnergyFunction {
             .collect()
     }
 
-    /// Compositional energy: placeholder for future features.
+    /// Compositional energy term.
     ///
-    /// Currently returns zeros (comp_weight = 0.0 in config).
+    /// Reserved for future composite energy features. Currently inactive
+    /// (comp_weight defaults to 0.0). Returns zeros so total_energy remains
+    /// correct when the weight is enabled.
     pub fn e_comp(&self, x: &Array2<f32>) -> Vec<f32> {
         vec![0.0; x.nrows()]
     }

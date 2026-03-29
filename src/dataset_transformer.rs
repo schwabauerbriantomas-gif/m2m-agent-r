@@ -96,7 +96,7 @@ impl DatasetTransformer {
 
     /// Compute and store normalization statistics from data.
     pub fn fit(&mut self, data: &Array2<f32>) {
-        let (n, d) = data.dim();
+        let (n, _d) = data.dim();
         if n == 0 { return; }
 
         if self.config.center {
@@ -278,7 +278,7 @@ impl DatasetTransformer {
         let n_fine = (n_clusters / n_coarse.max(1)).max(2);
 
         // Coarse KMeans
-        let (coarse_centers, coarse_labels) = simple_kmeans(data, n_coarse, 20, seed);
+        let (_coarse_centers, coarse_labels) = simple_kmeans(data, n_coarse, 20, seed);
 
         let mut splats = Vec::new();
         for c in 0..n_coarse {

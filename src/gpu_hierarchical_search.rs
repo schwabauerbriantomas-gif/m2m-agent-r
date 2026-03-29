@@ -22,6 +22,7 @@ impl Default for HierarchicalConfig {
 }
 
 /// A single cluster's data.
+#[allow(dead_code)]
 struct ClusterData {
     members: Array2<f32>,
     original_ids: Vec<usize>,
@@ -53,7 +54,6 @@ impl HierarchicalSearch {
         let (n, d) = (vectors.nrows(), vectors.ncols());
         self.dim = d;
         let n_clusters = self.config.n_clusters.min(n);
-        let n_probe = n_clusters.min(self.config.n_probe);
 
         // KMeans clustering (CPU, done once at build time)
         let (centroids, labels) = kmeans(vectors, n_clusters, 30);
@@ -259,7 +259,7 @@ mod tests {
             [1.0, 0.0], [1.1, 0.1], [0.9, -0.1],
             [0.0, 1.0], [0.1, 1.1], [-0.1, 0.9],
             [5.0, 5.0], [5.1, 4.9], [4.9, 5.1],
-        ].into_shape((9, 2)).unwrap()
+        ].into_shape_with_order((9, 2)).unwrap()
     }
 
     #[test]

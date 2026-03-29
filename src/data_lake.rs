@@ -3,7 +3,6 @@
 //! Simple dataset storage for training and evaluation.
 //! Ported from m2m-vector-search Python.
 
-use ndarray::{Array1, Array2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};

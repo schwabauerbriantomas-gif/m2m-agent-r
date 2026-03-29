@@ -8,8 +8,16 @@ use std::any::Any;
 /// Detect the best available compute device.
 /// Priority: CUDA > Vulkan > CPU
 pub fn detect_device() -> &'static str {
-    // TODO: Implement actual device detection
-    // For now, return CPU as fallback
+    // Check CUDA via nvidia-smi (available on Windows/Linux with NVIDIA driver)
+    if std::process::Command::new("nvidia-smi")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return "cuda";
+    }
     "cpu"
 }
 
@@ -708,7 +716,8 @@ mod tests {
         let mut config = M2MConfig::default();
         config.device = "auto".to_string();
         config.finalize();
-        assert_eq!(config.device, "cpu"); // no GPU detected in test
+        // detect_device() probes nvidia-smi — will find "cuda" if GPU present, else "cpu"
+        assert!(config.device == "cuda" || config.device == "cpu");
     }
 
     #[test]

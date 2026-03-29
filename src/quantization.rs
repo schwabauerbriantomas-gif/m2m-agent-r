@@ -216,7 +216,7 @@ impl QuantizedStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::Array1;
+
 
     fn random_vectors(n: usize, dim: usize, seed: u64) -> Array2<f32> {
         use rand::SeedableRng;
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(results.len(), 5);
         // With 4-bit quantization + turbo codes, top result should have positive score
         assert!(results[0].1 > 0.0, "Top result should have positive score");
-        let top_ids: Vec<u64> = results.iter().map(|(id, _)| *id).collect();
+        let _top_ids: Vec<u64> = results.iter().map(|(id, _)| *id).collect();
     }
 
     #[test]

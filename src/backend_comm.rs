@@ -142,6 +142,7 @@ pub struct BackendMetrics {
 /// - Performance metrics per backend
 /// - Dead letter queue for failed messages
 /// - Request/response tracking
+#[allow(dead_code)]
 pub struct BackendComm {
     max_history: usize,
     dead_letter_max: usize,
@@ -361,7 +362,7 @@ fn now_secs() -> f64 {
 
 fn generate_id() -> String {
     use std::hash::{Hash, Hasher};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::SystemTime;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     SystemTime::now().hash(&mut hasher);
     format!("{:012x}", hasher.finish())
