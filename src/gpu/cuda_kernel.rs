@@ -275,6 +275,109 @@ impl GpuIndex {
     pub fn n_vectors(&self) -> usize { self.n_vectors }
     pub fn dim(&self) -> usize { self.dim }
     pub fn is_loaded(&self) -> bool { self.data_gpu.is_some() }
+
+    /// GPU-only top-k search using combined distance+topk PTX kernel.
+    /// Returns (indices, distances) for each query. No full distance matrix download.
+    pub fn topk_search(
+        &self,
+        queries: &[f32],
+        n_queries: usize,
+        k: usize,
+        metric: &str,
+    ) -> Option<Vec<(Vec<usize>, Vec<f32>)>> {
+        let n = self.n_vectors;
+        let dim = self.dim;
+        let data_gpu = self.data_gpu.as_ref()?;
+
+        // Try PTX top-k kernel
+        if let Some(result) = self.launch_topk_kernel(queries, data_gpu, n_queries, n, dim, k, metric) {
+            return Some(result);
+        }
+        eprintln!("[m2m] top-k PTX kernel unavailable, using fallback");
+
+        // Fallback to separate distance + CPU top-k
+        let all_dists = if metric == "cosine" {
+            (0..n_queries)
+                .map(|q| self.cosine_distances(&queries[q * dim..(q + 1) * dim]))
+                .collect::<Option<Vec<Vec<f32>>>>()?
+        } else {
+            self.batch_l2_distances(queries, n_queries)?
+        };
+
+        let results: Vec<(Vec<usize>, Vec<f32>)> = all_dists.iter().map(|distances| {
+            let mut indices: Vec<usize> = (0..distances.len()).collect();
+            indices.sort_by(|a, b| distances[*a].partial_cmp(&distances[*b]).unwrap());
+            indices.truncate(k);
+            let dists: Vec<f32> = indices.iter().map(|&i| distances[i]).collect();
+            (indices, dists)
+        }).collect();
+        Some(results)
+    }
+
+    /// Launch combined top-k PTX kernel.
+    fn launch_topk_kernel(
+        &self,
+        queries: &[f32],
+        data_gpu: &CudaSlice<f32>,
+        n_queries: usize,
+        n: usize,
+        dim: usize,
+        k: usize,
+        metric: &str,
+    ) -> Option<Vec<(Vec<usize>, Vec<f32>)>> {
+        let ptx_path = option_env!("M2M_PTX_PATH")?;
+        if ptx_path.is_empty() || k > 32 {
+            return None; // Kernel supports K <= 32
+        }
+
+        let module = self.ctx.load_module(Ptx::from_file(ptx_path)).ok()?;
+        let kernel_name = if metric == "cosine" { "cosine_topk_kernel" } else { "l2_topk_kernel" };
+        eprintln!("[m2m] Launching {} PTX kernel (Q={}, N={}, D={}, K={})", kernel_name, n_queries, n, dim, k);
+        let func: CudaFunction = module.load_function(kernel_name).ok()?;
+
+        let queries_gpu = self.stream.clone_htod(queries).ok()?;
+        let mut idx_gpu = self.stream.alloc_zeros::<i32>(n_queries * k).ok()?;
+        let mut dist_gpu = self.stream.alloc_zeros::<f32>(n_queries * k).ok()?;
+
+        let block_dim: u32 = 256;
+        // Shared memory: D floats (query) + blockDim*K floats (dist) + blockDim*K ints (idx)
+        let shared_mem_bytes = (dim + (block_dim as usize) * k * 2) * 4;
+
+        let cfg = LaunchConfig {
+            grid_dim: (n_queries as u32, 1, 1),  // one block per query
+            block_dim: (block_dim, 1, 1),
+            shared_mem_bytes: shared_mem_bytes as u32,
+        };
+
+        unsafe {
+            self.stream.launch_builder(&func)
+                .arg(&queries_gpu)
+                .arg(data_gpu)
+                .arg(&mut idx_gpu)
+                .arg(&mut dist_gpu)
+                .arg(&(n_queries as i32))
+                .arg(&(n as i32))
+                .arg(&(dim as i32))
+                .arg(&(k as i32))
+                .launch(cfg)
+                .ok()?;
+        }
+
+        // Download only K*Q results (tiny compared to N*Q)
+        let indices_flat: Vec<i32> = self.stream.clone_dtoh(&idx_gpu).ok()?;
+        let distances_flat: Vec<f32> = self.stream.clone_dtoh(&dist_gpu).ok()?;
+
+        let results: Vec<(Vec<usize>, Vec<f32>)> = (0..n_queries)
+            .map(|q| {
+                let indices: Vec<usize> = indices_flat[q*k..(q+1)*k]
+                    .iter().map(|&i| if i >= 0 { i as usize } else { 0 }).collect();
+                let distances: Vec<f32> = distances_flat[q*k..(q+1)*k].to_vec();
+                (indices, distances)
+            })
+            .collect();
+
+        Some(results)
+    }
 }
 
 // ============================================================================
@@ -295,7 +398,7 @@ pub fn gpu_cosine_distances(query: &[f32], dataset: &[f32], n_rows: usize, dim: 
     idx.cosine_distances(query)
 }
 
-/// GPU batch search — uses batch kernel when available.
+/// GPU batch search — uses top-k PTX kernel when available.
 pub fn gpu_batch_search(
     queries: &[f32],
     n_queries: usize,
@@ -307,25 +410,5 @@ pub fn gpu_batch_search(
 ) -> Option<Vec<(Vec<usize>, Vec<f32>)>> {
     let mut idx = GpuIndex::new()?;
     idx.upload_dataset(dataset, n_vectors, dim);
-
-    // Batch distance computation
-    let all_dists = if metric == "cosine" {
-        // Use per-query cosine (no batch cosine kernel for simplicity)
-        (0..n_queries)
-            .map(|q| idx.cosine_distances(&queries[q * dim..(q + 1) * dim]))
-            .collect::<Option<Vec<Vec<f32>>>>()?
-    } else {
-        idx.batch_l2_distances(queries, n_queries)?
-    };
-
-    // Top-k selection on CPU (fast for small k)
-    let results: Vec<(Vec<usize>, Vec<f32>)> = all_dists.iter().map(|distances| {
-        let mut indices: Vec<usize> = (0..distances.len()).collect();
-        indices.sort_by(|a, b| distances[*a].partial_cmp(&distances[*b]).unwrap());
-        indices.truncate(k);
-        let dists: Vec<f32> = indices.iter().map(|&i| distances[i]).collect();
-        (indices, dists)
-    }).collect();
-
-    Some(results)
+    idx.topk_search(queries, n_queries, k, metric)
 }

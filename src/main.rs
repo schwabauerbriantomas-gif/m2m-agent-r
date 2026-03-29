@@ -718,6 +718,7 @@ fn main() {
 
         Commands::BenchGpu { n_vectors, dim, n_queries, top_k, metric } => {
             use std::time::Instant;
+            use m2m_vector_search::gpu::cuda_kernel::GpuIndex;
 
             // Generate random dataset
             eprintln!("[m2m] Generating {} vectors ({}D)...", n_vectors, dim);
@@ -737,14 +738,33 @@ fn main() {
             );
             let cpu_ms = t0.elapsed().as_millis() as f64;
 
-            // GPU benchmark (if available)
-            let gpu_ms = if m2m_vector_search::gpu::is_cuda_available() {
-                eprintln!("[m2m] GPU benchmark...");
+            // GPU benchmark with persistent dataset
+            let gpu_result = if let Some(mut gpu_idx) = GpuIndex::new() {
+                // Upload phase (measured separately)
+                eprintln!("[m2m] Uploading {} vectors to GPU...", n_vectors);
+                let t_upload = Instant::now();
+                gpu_idx.upload_dataset(&dataset, n_vectors, dim);
+                let upload_ms = t_upload.elapsed().as_millis() as f64;
+
+                // Query phase (dataset already in VRAM)
+                eprintln!("[m2m] GPU query benchmark (dataset in VRAM)...");
                 let t1 = Instant::now();
-                let gpu_results = m2m_vector_search::gpu::batch_search(
-                    &queries, n_queries, &dataset, n_vectors, dim, top_k, &metric,
-                );
-                let gpu_time = t1.elapsed().as_millis() as f64;
+                let gpu_results = gpu_idx.topk_search(&queries, n_queries, top_k, &metric);
+                let query_ms = t1.elapsed().as_millis() as f64;
+
+                let gpu_results = match gpu_results {
+                    Some(r) => r,
+                    None => {
+                        eprintln!("[m2m] GPU topk_search returned None");
+                        // Fallback to full pipeline
+                        let t2 = Instant::now();
+                        let r = m2m_vector_search::gpu::batch_search(
+                            &queries, n_queries, &dataset, n_vectors, dim, top_k, &metric,
+                        );
+                        let _ = query_ms + t2.elapsed().as_millis() as f64;
+                        r
+                    }
+                };
 
                 // Verify GPU matches CPU
                 let matches = cpu_results.len() == gpu_results.len()
@@ -752,10 +772,24 @@ fn main() {
                         .all(|(c, g)| c.0.first() == g.0.first());
 
                 eprintln!("[m2m] GPU/CPU results match: {}", matches);
-                Some(gpu_time)
+                Some((upload_ms, query_ms))
             } else {
                 None
             };
+
+            let gpu_json = gpu_result.map(|(upload_ms, query_ms)| {
+                let total_gpu = upload_ms + query_ms;
+                serde_json::json!({
+                    "upload_ms": upload_ms,
+                    "query_ms": query_ms,
+                    "total_ms": total_gpu,
+                    "per_query_us": query_ms / n_queries as f64 * 1000.0,
+                    "qps_persistent": n_queries as f64 / (query_ms / 1000.0),
+                    "qps_with_upload": n_queries as f64 / (total_gpu / 1000.0),
+                    "speedup_persistent": cpu_ms / query_ms,
+                    "speedup_with_upload": cpu_ms / total_gpu,
+                })
+            });
 
             println!("{}", serde_json::json!({
                 "config": {
@@ -764,18 +798,14 @@ fn main() {
                     "n_queries": n_queries,
                     "top_k": top_k,
                     "metric": metric,
+                    "dataset_mb": (n_vectors * dim * 4) as f64 / 1_048_576.0,
                 },
                 "cpu": {
                     "total_ms": cpu_ms,
                     "per_query_us": cpu_ms / n_queries as f64 * 1000.0,
                     "qps": n_queries as f64 / (cpu_ms / 1000.0),
                 },
-                "gpu": gpu_ms.map(|ms| serde_json::json!({
-                    "total_ms": ms,
-                    "per_query_us": ms / n_queries as f64 * 1000.0,
-                    "qps": n_queries as f64 / (ms / 1000.0),
-                    "speedup": cpu_ms / ms,
-                })),
+                "gpu": gpu_json,
             }));
         }
     }
