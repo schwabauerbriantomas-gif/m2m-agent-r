@@ -1006,5 +1006,123 @@ mod tests {
         let result = store.ingest_with_transformer(&data, 3, 42);
         assert!(result.is_err(), "Should fail with dimension mismatch");
     }
+
+    // ─── Subsystem initialization tests per preset ───
+
+    /// Helper: create a store with CPU-forced config from a preset
+    fn store_from_preset(mut config: M2MConfig) -> crate::splats::SplatStore {
+        config.device = "cpu".to_string();
+        config.enable_cuda = false;
+        config.enable_vulkan = false;
+        config.enable_gpu_search = false;
+        config.finalize();
+        crate::splats::SplatStore::new(config)
+    }
+
+    #[test]
+    fn test_simple_preset_no_subsystems() {
+        let store = store_from_preset(M2MConfig::simple(None));
+        assert!(!store.has_quantization(), "simple: no quantization subsystem");
+        assert!(!store.has_hnsw(), "simple: no HNSW subsystem");
+        assert!(!store.has_lsh(), "simple: no LSH subsystem");
+        assert!(!store.has_semantic_memory(), "simple: no semantic memory");
+    }
+
+    #[test]
+    fn test_advanced_preset_subsystems() {
+        let store = store_from_preset(M2MConfig::advanced(None));
+        assert!(store.has_quantization(), "advanced: should have quantization");
+        assert!(store.has_hnsw(), "advanced: should have HNSW");
+        assert!(!store.has_lsh(), "advanced: LSH not in advanced preset");
+        assert!(store.has_semantic_memory(), "advanced: should have semantic memory");
+    }
+
+    #[test]
+    fn test_training_preset_subsystems() {
+        let store = store_from_preset(M2MConfig::training(None));
+        assert!(!store.has_quantization(), "training: no quantization");
+        assert!(!store.has_hnsw(), "training: no HNSW");
+        assert!(!store.has_lsh(), "training: no LSH");
+        assert!(!store.has_semantic_memory(), "training: no semantic memory");
+    }
+
+    #[test]
+    fn test_distributed_preset_subsystems() {
+        let store = store_from_preset(M2MConfig::distributed(None));
+        assert!(store.has_quantization(), "distributed: should have quantization");
+        assert!(!store.has_hnsw(), "distributed: no HNSW (not in distributed config)");
+        assert!(store.has_semantic_memory(), "distributed: should have semantic memory");
+    }
+
+    #[test]
+    fn test_gpu_preset_subsystems() {
+        let store = store_from_preset(M2MConfig::gpu(None));
+        assert!(store.has_quantization(), "gpu: should have quantization");
+        assert!(store.has_hnsw(), "gpu: should have HNSW");
+        assert!(store.has_semantic_memory(), "gpu: should have semantic memory");
+    }
+
+    #[test]
+    fn test_fused_search_uses_hnsw() {
+        use crate::splats::SplatStore;
+        use ndarray::{Array1, Array2};
+
+        let mut config = M2MConfig::advanced(None);
+        config.device = "cpu".to_string();
+        config.enable_cuda = false;
+        config.enable_vulkan = false;
+        config.enable_gpu_search = false;
+        config.latent_dim = 16;
+        config.max_splats = 500;
+        config.finalize();
+
+        let mut store = SplatStore::new(config);
+        assert!(store.has_hnsw());
+        assert!(store.has_quantization());
+
+        // Add data and build all indexes
+        let data = Array2::from_shape_fn((100, 16), |(i, j)| ((i * 16 + j) as f32 * 0.01).sin());
+        let mut normalized = data.clone();
+        for mut row in normalized.rows_mut() {
+            let norm = row.dot(&row).sqrt().max(1e-10);
+            row.mapv_inplace(|v| v / norm);
+        }
+        store.add_splat(&normalized);
+        store.build_index();
+
+        // Fused search should work with HNSW + quantization
+        let query = normalized.row(0).to_owned();
+        let fused = store.find_neighbors_fused(&query.view(), 5);
+        assert!(!fused.is_empty(), "Fused search should return results");
+        assert_eq!(fused[0].index, 0, "Fused: nearest should be index 0");
+    }
+
+    #[test]
+    fn test_simple_preset_no_fused_overhead() {
+        use crate::splats::SplatStore;
+        use ndarray::Array2;
+
+        let mut config = M2MConfig::simple(None);
+        config.device = "cpu".to_string();
+        config.enable_cuda = false;
+        config.latent_dim = 16;
+        config.max_splats = 500;
+        config.finalize();
+
+        let mut store = SplatStore::new(config);
+        // Simple should have NO subsystems — fused falls back to linear scan only
+        assert!(!store.has_quantization());
+        assert!(!store.has_hnsw());
+        assert!(!store.has_lsh());
+
+        let data = Array2::from_shape_fn((50, 16), |(i, j)| ((i * 16 + j) as f32 * 0.01).sin());
+        store.add_splat(&data);
+        store.build_index();
+
+        let query = ndarray::Array1::from_vec(data.row(0).to_vec());
+        let fused = store.find_neighbors_fused(&query.view(), 3);
+        assert!(!fused.is_empty());
+        assert_eq!(fused[0].index, 0);
+    }
 }
 

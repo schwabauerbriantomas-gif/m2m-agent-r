@@ -2,6 +2,7 @@
 //! Ported from Python splats.py. CPU-only.
 
 use crate::dataset_transformer;
+use crate::interfaces::VectorIndex;
 use ndarray::{Array1, Array2, ArrayView1};
 
 use crate::config::M2MConfig;
@@ -18,6 +19,12 @@ pub struct NeighborResult {
 }
 
 /// Main SplatStore - wraps HRM2Engine for high-level vector operations.
+///
+/// Subsystems are initialized based on preset config:
+/// - `enable_quantization` → QuantizedStore for compressed search
+/// - `enable_hnsw` → HNSWIndex as secondary index
+/// - `enable_lsh` → CrossPolytopeLSH for approximate search
+/// - `enable_semantic_memory` → SemanticMemoryDB for hybrid text+vector search
 pub struct SplatStore {
     config: M2MConfig,
     max_splats: usize,
@@ -28,6 +35,13 @@ pub struct SplatStore {
     frequency: Array1<f32>,
     engine: HRM2Engine,
     next_id: u64,
+    // Preset-driven subsystems (None when disabled)
+    quant_store: Option<crate::quantization::QuantizedStore>,
+    hnsw: Option<crate::hnsw_index::HNSWIndex>,
+    lsh: Option<crate::lsh_index::CrossPolytopeLSH>,
+    // Semantic memory is a separate layer (it contains its own SplatStore internally,
+    // so we can't embed it here without creating a cycle). Use has_semantic_memory()
+    // to check if the preset enables it, then manage SemanticMemoryDB externally.
 }
 
 impl SplatStore {
@@ -37,6 +51,52 @@ impl SplatStore {
         let n_coarse = (((max_splats as f64).sqrt() / 10.0) as usize).max(10);
         let n_fine = (max_splats / n_coarse).max(100);
         let engine = HRM2Engine::new(n_coarse, n_fine, dim, n_coarse.min(5), "cosine");
+
+        // Initialize subsystems based on preset config
+        let quant_store = if config.enable_quantization {
+            let qcfg = crate::quantization::QuantConfig {
+                bits: config.quant_bits as u8,
+                projections: config.quant_projections,
+                seed: 42,
+                algorithm: match config.quant_algorithm {
+                    crate::config::QuantAlgorithm::TurboQuant => crate::quantization::QuantAlgorithm::TurboQuant,
+                    crate::config::QuantAlgorithm::PolarQuant => crate::quantization::QuantAlgorithm::PolarQuant,
+                    crate::config::QuantAlgorithm::None => crate::quantization::QuantAlgorithm::TurboQuant,
+                },
+            };
+            crate::quantization::QuantizedStore::new(dim, qcfg).ok()
+        } else {
+            None
+        };
+
+        let hnsw = if config.enable_hnsw {
+            Some(crate::hnsw_index::HNSWIndex::new(
+                dim,
+                config.hnsw_m,
+                config.hnsw_ef_construction,
+                config.hnsw_ef_search,
+                "cosine",
+                42,
+            ))
+        } else {
+            None
+        };
+
+        let lsh = if config.enable_lsh {
+            let lsh_cfg = crate::lsh_index::LSHConfig {
+                dim,
+                n_tables: 16,
+                n_bits: 8,
+                n_probes: 3,
+                n_candidates: 100,
+                seed: 42,
+            };
+            Some(crate::lsh_index::CrossPolytopeLSH::new(lsh_cfg))
+        } else {
+            None
+        };
+
+        let semantic_enabled = config.enable_semantic_memory;
 
         Self {
             config,
@@ -48,6 +108,9 @@ impl SplatStore {
             frequency: Array1::zeros(max_splats),
             engine,
             next_id: 0,
+            quant_store,
+            hnsw,
+            lsh,
         }
     }
 
@@ -69,12 +132,35 @@ impl SplatStore {
     }
 
     /// Build the search index from active vectors.
+    ///
+    /// Feeds active vectors to all enabled subsystems:
+    /// - HRM2 engine (always)
+    /// - QuantizedStore (if enable_quantization)
+    /// - HNSW index (if enable_hnsw)
+    /// - LSH index (if enable_lsh)
     pub fn build_index(&mut self) {
         if self.n_active == 0 {
             return;
         }
         let embeddings = self.mu.slice(ndarray::s![..self.n_active, ..]).to_owned();
-        self.engine.index(Some(embeddings));
+
+        // Primary HRM2 index
+        self.engine.index(Some(embeddings.clone()));
+
+        // Quantized store
+        if let Some(ref mut qs) = self.quant_store {
+            qs.add_batch(&embeddings, 0);
+        }
+
+        // HNSW secondary index
+        if let Some(ref mut hnsw) = self.hnsw {
+            hnsw.build(embeddings.clone());
+        }
+
+        // LSH index
+        if let Some(ref mut lsh) = self.lsh {
+            lsh.index(embeddings);
+        }
     }
 
     /// Find k nearest neighbors for a single query.
@@ -110,6 +196,93 @@ impl SplatStore {
             })
             .collect()
     }
+
+    /// Find k nearest neighbors using ALL enabled search backends.
+    ///
+    /// Fuses results from:
+    /// - Linear scan (primary, always)
+    /// - Quantized search (if enable_quantization)
+    /// - HNSW search (if enable_hnsw)
+    /// - LSH search (if enable_lsh)
+    ///
+    /// Returns fused results ranked by distance.
+    pub fn find_neighbors_fused(&self, query: &ArrayView1<f32>, k: usize) -> Vec<NeighborResult> {
+        let n = self.n_active;
+        if n == 0 || k == 0 {
+            return Vec::new();
+        }
+        let k = k.min(n);
+
+        // Collect candidate sets from each enabled backend
+        let mut candidates: std::collections::HashMap<usize, f32> = std::collections::HashMap::new();
+
+        // 1. Primary linear scan (always)
+        let index_data = self.mu.slice(ndarray::s![..n, ..]);
+        for i in 0..n {
+            let dist: f32 = index_data.row(i).iter().zip(query.iter())
+                .map(|(a, b)| { let d = a - b; d * d }).sum::<f32>().sqrt();
+            candidates.insert(i, dist);
+        }
+
+        // 2. Quantized search (pre-filter candidates)
+        if let Some(ref qs) = self.quant_store {
+            let qresults = qs.search(query, k * 2);
+            for (id, dist) in qresults {
+                let idx = id as usize;
+                if idx < n {
+                    candidates.entry(idx).and_modify(|d| *d = (*d).min(dist)).or_insert(dist);
+                }
+            }
+        }
+
+        // 3. HNSW search
+        if let Some(ref hnsw) = self.hnsw {
+            let hresults = hnsw.search(query.clone(), k * 2);
+            for (idx, dist) in hresults.indices.iter().zip(hresults.distances.iter()) {
+                if *idx < n {
+                    candidates.entry(*idx).and_modify(|d| *d = (*d).min(*dist)).or_insert(*dist);
+                }
+            }
+        }
+
+        // 4. LSH search
+        if let Some(ref lsh) = self.lsh {
+            let (indices, dists) = lsh.query(query, k * 2);
+            for (idx, dist) in indices.iter().zip(dists.iter()) {
+                if *idx < n {
+                    candidates.entry(*idx).and_modify(|d| *d = (*d).min(*dist)).or_insert(*dist);
+                }
+            }
+        }
+
+        // Sort by distance and return top-k
+        let mut ranked: Vec<(usize, f32)> = candidates.into_iter().collect();
+        if k < ranked.len() {
+            ranked.select_nth_unstable_by(k, |a, b| a.1.partial_cmp(&b.1).unwrap());
+        }
+        ranked[..k].sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+
+        ranked[..k]
+            .iter()
+            .map(|&(idx, dist)| NeighborResult {
+                mu: index_data.row(idx).to_vec(),
+                alpha: self.alpha[idx],
+                kappa: self.kappa[idx],
+                index: idx,
+                distance: dist,
+            })
+            .collect()
+    }
+
+    /// Check if quantization subsystem is active.
+    pub fn has_quantization(&self) -> bool { self.quant_store.is_some() }
+    /// Check if HNSW index is active.
+    pub fn has_hnsw(&self) -> bool { self.hnsw.is_some() }
+    /// Check if LSH index is active.
+    pub fn has_lsh(&self) -> bool { self.lsh.is_some() }
+    /// Check if semantic memory is enabled in this preset.
+    /// Note: SemanticMemoryDB must be managed externally (it wraps its own SplatStore).
+    pub fn has_semantic_memory(&self) -> bool { self.config.enable_semantic_memory }
 
     /// Batch find neighbors for multiple queries.
     pub fn find_neighbors_batch(&self, queries: &Array2<f32>, k: usize) -> Vec<Vec<NeighborResult>> {
