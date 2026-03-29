@@ -334,6 +334,13 @@ enum Commands {
         #[arg(short, long, default_value = "l2")]
         metric: String,
     },
+
+    /// Start HTTP API server for Python bindings
+    Serve {
+        /// Port to listen on
+        #[arg(short, long, default_value = "8199")]
+        port: u16,
+    },
 }
 
 fn make_config(dim: usize, max_splats: usize) -> M2MConfig {
@@ -848,7 +855,7 @@ fn main() {
             }));
         }
 
-        Commands::BenchGpu { .. } => {
+        Commands::BenchGpu { n_vectors, dim, n_queries, top_k, metric } => {
             #[cfg(not(feature = "cuda"))]
             {
                 eprintln!("[m2m] bench-gpu requires --features cuda");
@@ -1271,6 +1278,18 @@ fn main() {
                 "gpu_raw_search": gpu_search,
                 "total_pipeline_ms": total_pipeline as u64,
             }));
+        }
+
+        Commands::Serve { port } => {
+            println!("[m2m] Starting API server on port {}...", port);
+            let rt = tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                if let Err(e) = m2m_vector_search::api_server::run_server(port).await {
+                    eprintln!("[m2m] Server error: {}", e);
+                    std::process::exit(1);
+                }
+            });
         }
     }
 }
