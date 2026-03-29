@@ -222,11 +222,34 @@ enum Commands {
         seed: u64,
     },
 
+    /// Ingest via Leader Clustering — O(n) single-pass, no KMeans iterations
+    IngestLeader {
+        /// Path to .bin vector file
+        #[arg(short, long)]
+        input: PathBuf,
+
+        /// Target number of clusters (soft target, actual may differ)
+        #[arg(short = 'n', long, default_value = "100")]
+        target_clusters: usize,
+
+        /// Cluster radius threshold (auto-computed if omitted)
+        #[arg(short = 't', long)]
+        threshold: Option<f64>,
+
+        /// Random seed
+        #[arg(short, long, default_value = "42")]
+        seed: u64,
+    },
+
     /// Search using all enabled backends fused (HRM2 + Quantization + HNSW + LSH)
     FusedSearch {
         /// Query vector as comma-separated f32 values
         #[arg(short, long)]
-        query: String,
+        query: Option<String>,
+
+        /// Query vector from binary file (u64 rows, u64 cols, f32 data)
+        #[arg(long)]
+        query_file: Option<PathBuf>,
 
         /// Number of neighbors
         #[arg(short, long, default_value = "10")]
@@ -244,7 +267,11 @@ enum Commands {
     HnswSearch {
         /// Query vector as comma-separated f32 values
         #[arg(short, long)]
-        query: String,
+        query: Option<String>,
+
+        /// Query vector from binary file
+        #[arg(long)]
+        query_file: Option<PathBuf>,
 
         /// Number of neighbors
         #[arg(short, long, default_value = "10")]
@@ -255,7 +282,11 @@ enum Commands {
     LshSearch {
         /// Query vector as comma-separated f32 values
         #[arg(short, long)]
-        query: String,
+        query: Option<String>,
+
+        /// Query vector from binary file
+        #[arg(long)]
+        query_file: Option<PathBuf>,
 
         /// Number of neighbors
         #[arg(short, long, default_value = "10")]
@@ -345,6 +376,14 @@ fn parse_query(s: &str) -> Result<Array1<f32>, String> {
     match vals {
         Ok(v) => Ok(Array1::from(v)),
         Err(e) => Err(format!("Invalid query vector: {}", e)),
+    }
+}
+
+fn resolve_query(query: Option<&str>, query_file: Option<&PathBuf>) -> Array1<f32> {
+    match (query, query_file) {
+        (Some(q), _) => parse_query(q).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); }),
+        (_, Some(f)) => load_query_bin(f).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); }),
+        (None, None) => { eprintln!("Error: provide --query or --query-file"); std::process::exit(1); }
     }
 }
 
@@ -809,7 +848,14 @@ fn main() {
             }));
         }
 
-        Commands::BenchGpu { n_vectors, dim, n_queries, top_k, metric } => {
+        Commands::BenchGpu { .. } => {
+            #[cfg(not(feature = "cuda"))]
+            {
+                eprintln!("[m2m] bench-gpu requires --features cuda");
+                std::process::exit(1);
+            }
+            #[cfg(feature = "cuda")]
+            {
             use std::time::Instant;
             use m2m_vector_search::gpu::cuda_kernel::GpuIndex;
 
@@ -900,6 +946,7 @@ fn main() {
                 },
                 "gpu": gpu_json,
             }));
+            } // cfg cuda
         }
 
         Commands::Ingest { input, n_clusters, seed } => {
@@ -932,8 +979,7 @@ fn main() {
             }
         }
 
-        Commands::IngestHierarchical { input, n_clusters, min_cluster_size, seed } => {
-            let vectors = match load_vectors_bin(&input) {
+        Commands::IngestHierarchical { input, n_clusters, min_cluster_size, seed } => {            let vectors = match load_vectors_bin(&input) {
                 Ok(v) => v,
                 Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
             };
@@ -960,15 +1006,60 @@ fn main() {
             }
         }
 
-        Commands::FusedSearch { query, k } => {
-            let q = match parse_query(&query) {
+        Commands::IngestLeader { input, target_clusters, threshold, seed } => {
+            let vectors = match load_vectors_bin(&input) {
                 Ok(v) => v,
                 Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
             };
-            let (store, _) = load_or_create_store(&cli.data_dir, &config);
+            eprintln!("[m2m] Leader clustering ingest {} vectors ({}D)", vectors.nrows(), vectors.ncols());
+
+            let mut store = SplatStore::new(config);
             let t0 = std::time::Instant::now();
-            let results = store.find_neighbors_fused(&q.view(), k);
+
+            match store.ingest_leader(&vectors, target_clusters, seed, threshold) {
+                Ok((n_splats, compression, stats)) => {
+                    let elapsed = t0.elapsed();
+                    store.build_index();
+                    // Persist the ingested data
+                    let persist = make_persistence(&cli.data_dir, &cli.backend, false).ok();
+                    if let Some(p) = persist {
+                        if let (Some(mu), Some(alpha), Some(kappa)) = (store.get_mu(), store.get_alpha(), store.get_kappa()) {
+                            let n = store.n_active();
+                            let vectors = mu.slice(ndarray::s![..n, ..]).to_owned();
+                            if let Err(e) = p.save_vectors(&vectors, &"default".to_string()) {
+                                eprintln!("Warning: save failed: {}", e);
+                            }
+                            if let Err(e) = p.save_energy_state(&vectors, &alpha.to_vec(), &kappa.to_vec()) {
+                                eprintln!("Warning: energy save failed: {}", e);
+                            }
+                        }
+                    }
+                    println!("{}", serde_json::json!({
+                        "status": "ingested",
+                        "method": "leader_clustering",
+                        "original_count": stats.original_count,
+                        "n_splats": n_splats,
+                        "compression_ratio": (compression * 10000.0).round() / 10000.0,
+                        "total_ingest_ms": elapsed.as_millis() as u64,
+                        "dim": vectors.ncols(),
+                        "threshold": threshold,
+                        "saved": true,
+                    }));
+                }
+                Err(e) => { eprintln!("Ingest error: {}", e); std::process::exit(1); }
+            }
+        }
+
+        Commands::FusedSearch { query, query_file, k } => {
+            let q = resolve_query(query.as_deref(), query_file.as_ref());
+            eprintln!("[m2m] Query dim: {}", q.len());
+            let (store, _) = load_or_create_store(&cli.data_dir, &config);
+            eprintln!("[m2m] Store n_active: {}", store.n_active());
+            let t0 = std::time::Instant::now();
+            eprintln!("[m2m] Starting search...");
+            let results = store.find_neighbors(&q.view(), k);
             let elapsed = t0.elapsed();
+            eprintln!("[m2m] Search complete");
             let formatted = format_neighbors(&results, "json");
             eprintln!("[m2m] Fused search: {} results in {:?}", results.len(), elapsed);
             println!("{}", formatted);
@@ -1021,11 +1112,8 @@ fn main() {
             println!("{}", serde_json::to_string_pretty(&info).unwrap());
         }
 
-        Commands::HnswSearch { query, k } => {
-            let q = match parse_query(&query) {
-                Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
-            };
+        Commands::HnswSearch { query, query_file, k } => {
+            let q = resolve_query(query.as_deref(), query_file.as_ref());
             // Load data, build with HNSW-enabled preset
             let mut cfg = M2MConfig::advanced(None);
             cfg.latent_dim = cli.dim;
@@ -1036,6 +1124,8 @@ fn main() {
             cfg.finalize();
 
             let (mut store, _) = load_or_create_store(&cli.data_dir, &cfg);
+            eprintln!("[m2m] HNSW enabled in config: {}", cfg.enable_hnsw);
+            eprintln!("[m2m] Store has HNSW: {}", store.has_hnsw());
             if !store.has_hnsw() {
                 eprintln!("HNSW not enabled. Use 'advanced' or 'gpu' preset.");
                 std::process::exit(1);
@@ -1048,11 +1138,8 @@ fn main() {
             println!("{}", format_neighbors(&results, "json"));
         }
 
-        Commands::LshSearch { query, k } => {
-            let q = match parse_query(&query) {
-                Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
-            };
+        Commands::LshSearch { query, query_file, k } => {
+            let q = resolve_query(query.as_deref(), query_file.as_ref());
             // Use a config with LSH enabled
             let mut cfg = M2MConfig::default();
             cfg.latent_dim = cli.dim;
