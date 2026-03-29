@@ -10,8 +10,36 @@ use std::any::Any;
 pub fn detect_device() -> &'static str {
     // TODO: Implement actual device detection
     // For now, return CPU as fallback
-    // In production, check for CUDA via rust-cuda or vulkano
     "cpu"
+}
+
+/// Quantization algorithm selector.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+pub enum QuantAlgorithm {
+    #[default]
+    TurboQuant,
+    PolarQuant,
+    None,
+}
+
+/// Search backend selector.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+pub enum SearchBackend {
+    #[default]
+    Hrm2,
+    Hnsw,
+    Lsh,
+    Quantized,
+}
+
+/// Semantic search fusion method.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+pub enum FusionMethod {
+    #[default]
+    Rrf,
+    Weighted,
+    VectorOnly,
+    Bm25Only,
 }
 
 /// Configuration for M2M (Machine-to-Memory) system.
@@ -91,6 +119,60 @@ pub struct M2MConfig {
     // --- API Configuration ---
     pub rest_port: u16,
     pub grpc_port: u16,
+
+    // --- Search Configuration ---
+    pub search_backend: SearchBackend,
+    pub hrm2_n_coarse: usize,
+    pub hrm2_n_fine: usize,
+    pub hrm2_n_probe: usize,
+
+    // --- HNSW Configuration ---
+    pub enable_hnsw: bool,
+    pub hnsw_m: usize,
+    pub hnsw_ef_construction: usize,
+    pub hnsw_ef_search: usize,
+
+    // --- LSH Configuration ---
+    pub enable_lsh: bool,
+    pub lsh_n_tables: usize,
+    pub lsh_n_projections: usize,
+
+    // --- Quantization Configuration ---
+    pub enable_quantization: bool,
+    pub quant_algorithm: QuantAlgorithm,
+    pub quant_bits: u8,
+    pub quant_projections: usize,
+    pub quant_seed: u64,
+    pub quant_search_fraction: f64,
+
+    // --- GraphSplat Configuration ---
+    pub enable_graph: bool,
+    pub graph_max_neighbors: usize,
+    pub graph_traverse_depth: usize,
+    pub graph_boost_weight: f64,
+
+    // --- Semantic Memory Configuration ---
+    pub enable_semantic_memory: bool,
+    pub semantic_fusion: FusionMethod,
+    pub semantic_vector_weight: f64,
+    pub semantic_bm25_weight: f64,
+    pub semantic_bm25_k1: f64,
+    pub semantic_bm25_b: f64,
+    pub semantic_decay_halflife: f64,
+
+    // --- MapReduce Indexing ---
+    pub enable_mapreduce: bool,
+    pub mapreduce_n_chunks: usize,
+
+    // --- Auto-Scaling ---
+    pub enable_auto_scaling: bool,
+    pub autoscale_min_nodes: usize,
+    pub autoscale_max_nodes: usize,
+    pub autoscale_cooldown_secs: f64,
+
+    // --- Quality Reflection ---
+    pub enable_quality_reflection: bool,
+    pub quality_recall_target: f64,
 }
 
 /// Dtype enum to represent numpy-style data types
@@ -183,6 +265,60 @@ impl Default for M2MConfig {
             // API
             rest_port: 8080,
             grpc_port: 9090,
+
+            // Search
+            search_backend: SearchBackend::Hrm2,
+            hrm2_n_coarse: 16,
+            hrm2_n_fine: 64,
+            hrm2_n_probe: 4,
+
+            // HNSW
+            enable_hnsw: false,
+            hnsw_m: 16,
+            hnsw_ef_construction: 200,
+            hnsw_ef_search: 50,
+
+            // LSH
+            enable_lsh: false,
+            lsh_n_tables: 12,
+            lsh_n_projections: 8,
+
+            // Quantization
+            enable_quantization: true,
+            quant_algorithm: QuantAlgorithm::TurboQuant,
+            quant_bits: 8,
+            quant_projections: 160,
+            quant_seed: 42,
+            quant_search_fraction: 0.1,
+
+            // Graph
+            enable_graph: true,
+            graph_max_neighbors: 10,
+            graph_traverse_depth: 3,
+            graph_boost_weight: 0.05,
+
+            // Semantic Memory
+            enable_semantic_memory: true,
+            semantic_fusion: FusionMethod::Rrf,
+            semantic_vector_weight: 0.7,
+            semantic_bm25_weight: 0.3,
+            semantic_bm25_k1: 1.5,
+            semantic_bm25_b: 0.75,
+            semantic_decay_halflife: 86400.0,
+
+            // MapReduce
+            enable_mapreduce: true,
+            mapreduce_n_chunks: 8,
+
+            // Auto-Scaling
+            enable_auto_scaling: false,
+            autoscale_min_nodes: 1,
+            autoscale_max_nodes: 10,
+            autoscale_cooldown_secs: 60.0,
+
+            // Quality
+            enable_quality_reflection: true,
+            quality_recall_target: 0.95,
         }
     }
 }
@@ -210,7 +346,7 @@ impl M2MConfig {
         }
     }
 
-    /// Device efectivo para operaciones de búsqueda.
+    /// Device efectivo para operaciones de busqueda.
     pub fn effective_device(&self) -> &str {
         if self.enable_cuda {
             "cuda"
@@ -223,10 +359,11 @@ impl M2MConfig {
 
     /// Creates a 'Simple' configuration for edge computing.
     ///
-    /// Disables heavy features like SOC, 3-tier memory, and Langevin dynamics.
+    /// Stripped-down: no quantization overhead, no graph, no auto-scaling.
+    /// Pure HRM2 search with RAM-only memory.
     pub fn simple(device: Option<&str>) -> Self {
         let mut config = Self::default();
-        
+
         if let Some(d) = device {
             config.device = d.to_string();
         }
@@ -235,15 +372,43 @@ impl M2MConfig {
         config.memory_tier = "ram-only".to_string();
         config.splat_temperature = 0.0;
 
+        // Disable heavy features
+        config.enable_quantization = false;
+        config.enable_graph = false;
+        config.enable_semantic_memory = false;
+        config.enable_mapreduce = false;
+        config.enable_auto_scaling = false;
+        config.enable_quality_reflection = false;
+        config.enable_hnsw = false;
+        config.enable_lsh = false;
+
+        // Reduce HRM2 overhead
+        config.hrm2_n_coarse = 8;
+        config.hrm2_n_fine = 32;
+        config.hrm2_n_probe = 2;
+        config.max_splats = 10000;
+        config.n_splats_init = 1000;
+        config.knn_k = 32;
+
+        // Reduce memory footprint
+        config.langevin_steps = 0;
+        config.context_local = 8;
+        config.context_medium = 32;
+        config.context_global = 128;
+        config.hidden_dim = 512;
+        config.moe_experts = 2;
+        config.moe_active = 1;
+
         config
     }
 
     /// Creates an 'Advanced' configuration for Agentic AI workloads.
     ///
-    /// Enables 3-tier memory, SOC, EBM, and generative capabilities.
+    /// Everything enabled: TurboQuant compression, GraphSplat knowledge graph,
+    /// Semantic Memory with hybrid BM25+vector, auto-scaling, quality reflection.
     pub fn advanced(device: Option<&str>) -> Self {
         let mut config = Self::default();
-        
+
         if let Some(d) = device {
             config.device = d.to_string();
         }
@@ -251,6 +416,59 @@ impl M2MConfig {
         config.enable_3_tier_memory = true;
         config.memory_tier = "3-tier".to_string();
         config.splat_temperature = 0.1;
+
+        // Full quantization with TurboQuant for memory efficiency
+        config.enable_quantization = true;
+        config.quant_algorithm = QuantAlgorithm::TurboQuant;
+        config.quant_bits = 4;
+        config.quant_projections = 80;
+        config.quant_search_fraction = 0.2;
+
+        // GraphSplat for knowledge graph augmentation
+        config.enable_graph = true;
+        config.graph_max_neighbors = 20;
+        config.graph_traverse_depth = 5;
+        config.graph_boost_weight = 0.1;
+
+        // Semantic Memory with RRF fusion and temporal decay
+        config.enable_semantic_memory = true;
+        config.semantic_fusion = FusionMethod::Rrf;
+        config.semantic_vector_weight = 0.6;
+        config.semantic_bm25_weight = 0.4;
+        config.semantic_decay_halflife = 3600.0; // 1 hour
+
+        // HNSW as secondary index for exact recall
+        config.enable_hnsw = true;
+        config.hnsw_m = 32;
+        config.hnsw_ef_construction = 400;
+        config.hnsw_ef_search = 100;
+
+        // MapReduce for bulk indexing
+        config.enable_mapreduce = true;
+        config.mapreduce_n_chunks = 16;
+
+        // Auto-scaling for distributed deployments
+        config.enable_auto_scaling = true;
+        config.autoscale_min_nodes = 2;
+        config.autoscale_max_nodes = 20;
+        config.autoscale_cooldown_secs = 30.0;
+
+        // Quality reflection with high recall target
+        config.enable_quality_reflection = true;
+        config.quality_recall_target = 0.99;
+
+        // Larger capacity
+        config.max_splats = 1_000_000;
+        config.n_splats_init = 50000;
+        config.knn_k = 128;
+        config.hrm2_n_coarse = 32;
+        config.hrm2_n_fine = 128;
+        config.hrm2_n_probe = 8;
+
+        // Full context windows
+        config.context_local = 24;
+        config.context_medium = 128;
+        config.context_global = 1024;
 
         config
     }
@@ -266,19 +484,50 @@ mod tests {
         assert_eq!(config.latent_dim, 640);
         assert_eq!(config.knn_k, 64);
         assert_eq!(config.device, "cpu");
+        assert!(config.enable_quantization);
+        assert!(config.enable_graph);
+        assert!(config.enable_semantic_memory);
     }
 
     #[test]
     fn test_simple_config() {
         let config = M2MConfig::simple(None);
         assert!(!config.enable_3_tier_memory);
+        assert!(!config.enable_quantization);
+        assert!(!config.enable_graph);
+        assert!(!config.enable_semantic_memory);
         assert_eq!(config.memory_tier, "ram-only");
+        assert_eq!(config.max_splats, 10000);
     }
 
     #[test]
     fn test_advanced_config() {
         let config = M2MConfig::advanced(Some("cuda"));
         assert!(config.enable_3_tier_memory);
+        assert!(config.enable_quantization);
+        assert!(config.enable_graph);
+        assert!(config.enable_semantic_memory);
+        assert!(config.enable_hnsw);
+        assert!(config.enable_auto_scaling);
         assert_eq!(config.device, "cuda");
+        assert_eq!(config.quant_bits, 4);
+        assert_eq!(config.max_splats, 1_000_000);
+        assert_eq!(config.hnsw_m, 32);
+    }
+
+    #[test]
+    fn test_finalized_auto_device() {
+        let mut config = M2MConfig::default();
+        config.device = "auto".to_string();
+        config.finalize();
+        assert_eq!(config.device, "cpu"); // no GPU detected in test
+    }
+
+    #[test]
+    fn test_finalized_cuda_device() {
+        let mut config = M2MConfig::default();
+        config.device = "cuda".to_string();
+        config.finalize();
+        assert!(config.enable_cuda);
     }
 }

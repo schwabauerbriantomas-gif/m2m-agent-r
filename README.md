@@ -181,13 +181,66 @@ enable_3_tier_memory = true  # Three-tier memory hierarchy
 device = "auto"           # auto | cpu | vulkan | cuda
 ```
 
-Presets:
+### Presets
 
-| Profile | Use Case | 3-Tier Memory | Langevin | Temperature |
-|---------|----------|---------------|----------|-------------|
-| `default()` | General purpose | On | On | 0.1 |
-| `simple(None)` | Edge / embedded | Off | Off | 0.0 |
-| `advanced(Some("cuda"))` | Agentic AI workloads | On | On | 0.1 |
+#### `M2MConfig::default()` — General Purpose
+
+The balanced configuration. Suitable for servers and workstations with moderate resources.
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `latent_dim` | 640 | Standard embedding size |
+| `max_splats` | 100,000 | Up to 100K vectors |
+| `knn_k` | 64 | High recall neighbor count |
+| `splat_temperature` | 0.1 | Mild exploration |
+| `enable_3_tier_memory` | true | Hot/warm/cold memory tiers |
+| `memory_tier` | "3-tier" | RAM + disk + compressed |
+| `langevin_steps` | 200 | Full Langevin dynamics for splat refinement |
+| `langevin_dt` | 0.001 | Fine-grained dynamics step size |
+| `soc_threshold` | 0.8 | Self-organized criticality active |
+| `context_local/medium/global` | 12/64/512 | Multi-scale context windows |
+| `moe_experts` / `moe_active` | 4 / 2 | Mixture of experts routing |
+
+Use when: general search applications, research, prototyping. Good balance of quality and speed.
+
+#### `M2MConfig::simple(device)` — Edge / Embedded
+
+Stripped-down configuration for resource-constrained environments. Removes all heavy features.
+
+| Parameter | Value | Difference from default |
+|-----------|-------|----------------------|
+| `enable_3_tier_memory` | **false** | No tiered memory — single RAM tier |
+| `memory_tier` | "ram-only" | Everything in RAM, no disk offloading |
+| `splat_temperature` | **0.0** | No exploration — deterministic behavior |
+| `device` | configurable | Pass "cpu", "vulkan", or None for auto |
+
+What's disabled:
+- No 3-tier memory hierarchy (no hot/warm/cold tiers)
+- No Langevin dynamics for splat refinement
+- No exploration sampling
+- Reduced memory overhead
+
+Use when: Raspberry Pi, IoT devices, embedded systems, or any environment with <4GB RAM and no disk I/O budget.
+
+#### `M2MConfig::advanced(device)` — Agentic AI Workloads
+
+Full-featured configuration with all intelligence features enabled. Designed for autonomous AI agents that need self-organizing memory and active learning.
+
+| Parameter | Value | Difference from default |
+|-----------|-------|----------------------|
+| `enable_3_tier_memory` | **true** | Full hot/warm/cold memory |
+| `memory_tier` | "3-tier" | RAM + disk + compressed storage |
+| `splat_temperature` | **0.1** | Active exploration enabled |
+| `device` | configurable | Pass "cuda" for GPU acceleration |
+
+What's additionally active:
+- **EBM Exploration**: Agent can ask "what don't I know?" and get directed to knowledge gaps
+- **Self-Organized Criticality**: Memory automatically reorganizes when overloaded
+- **Langevin Dynamics**: Splats continuously refine their positions via energy-based sampling
+- **3-Tier Memory**: Frequently accessed splats stay hot (RAM), rare ones compress to disk
+- **Multi-scale Context**: Local (12), medium (64), and global (512) context windows for hierarchical reasoning
+
+Use when: persistent AI agents, autonomous memory systems, long-running chatbots, research on self-organizing vector stores. Requires ≥8GB RAM. GPU (CUDA) recommended for large-scale deployments.
 
 ## License
 
