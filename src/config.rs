@@ -790,22 +790,221 @@ mod tests {
 
             let mut store = SplatStore::new(config);
 
-            // add_splat takes Array2<f32> with shape (1, dim)
             let vec1 = Array2::from_shape_vec((1, 640), vec![0.1f32; 640]).unwrap();
             let vec2 = Array2::from_shape_vec((1, 640), vec![0.2f32; 640]).unwrap();
 
-            let ok1 = store.add_splat(&vec1);
-            let ok2 = store.add_splat(&vec2);
-            assert!(ok1, "{name}: first add_splat should succeed");
-            assert!(ok2, "{name}: second add_splat should succeed");
+            assert!(store.add_splat(&vec1), "{name}: first add_splat failed");
+            assert!(store.add_splat(&vec2), "{name}: second add_splat failed");
 
             store.build_index();
 
             let query = Array1::from_vec(vec![0.1f32; 640]);
             let results = store.find_neighbors(&query.view(), 2);
-            assert!(!results.is_empty(), "{name}: find_neighbors should return results");
-            assert_eq!(results[0].index, 0, "{name}: nearest should be vec1 (index 0)");
+            assert!(!results.is_empty(), "{name}: find_neighbors empty");
+            assert_eq!(results[0].index, 0, "{name}: nearest should be vec1");
         }
+    }
+
+    // ─── Per-preset feature validation tests ───
+
+    #[test]
+    fn test_simple_preset_features() {
+        let c = M2MConfig::simple(None);
+        // Simple should have heavy features DISABLED
+        assert!(!c.enable_quantization, "simple: quantization should be off");
+        assert!(!c.enable_graph, "simple: graph should be off");
+        assert!(!c.enable_semantic_memory, "simple: semantic memory should be off");
+        assert!(!c.enable_hnsw, "simple: hnsw should be off");
+        assert!(!c.enable_lsh, "simple: lsh should be off");
+        assert!(!c.enable_3_tier_memory, "simple: 3-tier memory should be off");
+        assert!(!c.enable_auto_scaling, "simple: auto-scaling should be off");
+        assert!(!c.enable_mapreduce, "simple: mapreduce should be off");
+        // Compact footprint
+        assert_eq!(c.max_splats, 10_000, "simple: max_splats should be 10K");
+        assert_eq!(c.knn_k, 32, "simple: knn_k should be 32");
+        assert_eq!(c.moe_experts, 2, "simple: moe_experts should be 2");
+        assert!(c.langevin_steps == 0, "simple: langevin_steps should be 0");
+    }
+
+    #[test]
+    fn test_advanced_preset_features() {
+        let c = M2MConfig::advanced(None);
+        // Advanced should have EVERYTHING enabled
+        assert!(c.enable_quantization, "advanced: quantization should be on");
+        assert!(c.enable_graph, "advanced: graph should be on");
+        assert!(c.enable_semantic_memory, "advanced: semantic memory should be on");
+        assert!(c.enable_hnsw, "advanced: hnsw should be on");
+        assert!(c.enable_3_tier_memory, "advanced: 3-tier memory should be on");
+        assert!(c.enable_auto_scaling, "advanced: auto-scaling should be on");
+        assert!(c.enable_mapreduce, "advanced: mapreduce should be on");
+        assert!(c.enable_quality_reflection, "advanced: quality reflection should be on");
+        // Quantization specifics
+        assert_eq!(c.quant_algorithm, QuantAlgorithm::TurboQuant);
+        assert_eq!(c.quant_bits, 4);
+        // Semantic fusion
+        assert_eq!(c.semantic_fusion, FusionMethod::Rrf);
+        assert!((c.semantic_vector_weight - 0.6).abs() < 1e-6);
+        assert!((c.semantic_bm25_weight - 0.4).abs() < 1e-6);
+        // Large capacity
+        assert_eq!(c.max_splats, 1_000_000);
+        assert_eq!(c.knn_k, 128);
+    }
+
+    #[test]
+    fn test_training_preset_features() {
+        let c = M2MConfig::training(None);
+        // Training-specific features
+        assert!(c.enable_training, "training: training should be on");
+        assert!(c.training_noise_augmentation, "training: noise augmentation should be on");
+        assert!(c.training_distillation, "training: distillation should be on");
+        assert!(c.enable_data_lake, "training: data lake should be on");
+        assert!(c.enable_entity_extraction, "training: entity extraction should be on");
+        // Search features off during training
+        assert!(!c.enable_quantization, "training: quantization should be off");
+        assert!(!c.enable_graph, "training: graph should be off");
+        assert!(!c.enable_semantic_memory, "training: semantic memory should be off");
+        // Matryoshka dims
+        assert_eq!(c.training_matryoshka_dims, vec![32, 64, 128, 256, 640]);
+        // Noise levels for augmentation
+        assert!(!c.noise_levels.is_empty(), "training: should have noise levels");
+    }
+
+    #[test]
+    fn test_distributed_preset_features() {
+        let c = M2MConfig::distributed(None);
+        // Distributed-specific
+        assert!(c.enable_auto_scaling, "distributed: auto-scaling should be on");
+        assert!(c.enable_mapreduce, "distributed: mapreduce should be on");
+        assert!(c.enable_quantization, "distributed: quantization should be on");
+        assert!(c.enable_quality_reflection, "distributed: quality reflection should be on");
+        assert!(c.enable_semantic_memory, "distributed: semantic memory should be on");
+        // Scale
+        assert_eq!(c.max_splats, 10_000_000);
+        assert!(c.autoscale_max_nodes >= 10);
+        assert!(c.mapreduce_n_chunks >= 8);
+    }
+
+    #[test]
+    fn test_gpu_preset_features() {
+        let c = M2MConfig::gpu(None);
+        // GPU-specific
+        assert!(c.enable_cuda, "gpu: cuda should be on");
+        assert!(c.enable_gpu_search, "gpu: gpu search should be on");
+        assert!(c.enable_hnsw, "gpu: hnsw should be on");
+        assert!(c.enable_quantization, "gpu: quantization should be on");
+        assert!(c.enable_graph, "gpu: graph should be on");
+        assert!(c.enable_semantic_memory, "gpu: semantic memory should be on");
+        // GPU tuning
+        assert_eq!(c.gpu_batch_size, 4096);
+        assert!(c.gpu_auto_tune);
+        // Large capacity
+        assert_eq!(c.max_splats, 5_000_000);
+        assert_eq!(c.knn_k, 256);
+        assert_eq!(c.hrm2_n_coarse, 64);
+    }
+
+    // ─── Dataset transformer integration test ───
+
+    #[test]
+    fn test_ingest_with_transformer() {
+        use crate::dataset_transformer::{DatasetTransformer, TransformConfig};
+        use crate::splats::SplatStore;
+        use ndarray::Array2;
+
+        let mut config = M2MConfig::default();
+        config.latent_dim = 4;
+        config.max_splats = 1000;
+        config.device = "cpu".to_string();
+        config.enable_cuda = false;
+        config.finalize();
+
+        let mut store = SplatStore::new(config);
+
+        // Create test data: 3 clear clusters
+        let data = Array2::from_shape_vec((90, 4), {
+            let mut v = Vec::new();
+            // Cluster A: around (1,0,0,0)
+            for i in 0..30 { v.extend_from_slice(&[1.0 + i as f32 * 0.01, 0.0, 0.0, 0.0]); }
+            // Cluster B: around (0,1,0,0)
+            for i in 0..30 { v.extend_from_slice(&[0.0, 1.0 + i as f32 * 0.01, 0.0, 0.0]); }
+            // Cluster C: around (0,0,1,0)
+            for i in 0..30 { v.extend_from_slice(&[0.0, 0.0, 1.0 + i as f32 * 0.01, 0.0]); }
+            v
+        }).unwrap();
+
+        let result = store.ingest_with_transformer(&data, 3, 42);
+        assert!(result.is_ok(), "ingest_with_transformer failed: {:?}", result.err());
+
+        let (n_splats, compression, stats) = result.unwrap();
+        assert!(n_splats > 0, "Should produce splats");
+        assert!(n_splats <= 3, "Should produce at most 3 clusters, got {}", n_splats);
+        assert!(stats.original_count == 90);
+        assert!(compression > 0.0);
+
+        // Store should be searchable
+        store.build_index();
+        let query = ndarray::Array1::from_vec(vec![1.0, 0.0, 0.0, 0.0]);
+        let results = store.find_neighbors(&query.view(), n_splats);
+        assert!(!results.is_empty(), "Should find neighbors after transformer ingest");
+    }
+
+    #[test]
+    fn test_ingest_hierarchical() {
+        use crate::splats::SplatStore;
+        use ndarray::Array2;
+
+        let mut config = M2MConfig::default();
+        config.latent_dim = 4;
+        config.max_splats = 1000;
+        config.device = "cpu".to_string();
+        config.enable_cuda = false;
+        config.finalize();
+
+        let mut store = SplatStore::new(config);
+
+        // More data for hierarchical to be meaningful
+        let data = Array2::from_shape_vec((200, 4), {
+            let mut v = Vec::new();
+            for i in 0..200 {
+                let cluster = i % 5;
+                let base = match cluster {
+                    0 => [1.0, 0.0, 0.0, 0.0],
+                    1 => [0.0, 1.0, 0.0, 0.0],
+                    2 => [0.0, 0.0, 1.0, 0.0],
+                    3 => [0.0, 0.0, 0.0, 1.0],
+                    _ => [0.5, 0.5, 0.0, 0.0],
+                };
+                for b in base {
+                    v.push(b + (i as f32 * 0.001));
+                }
+            }
+            v
+        }).unwrap();
+
+        let result = store.ingest_hierarchical(&data, 10, 2, 42);
+        assert!(result.is_ok(), "ingest_hierarchical failed: {:?}", result.err());
+
+        let (n_splats, _, stats) = result.unwrap();
+        assert!(n_splats > 0);
+        assert_eq!(stats.original_count, 200);
+    }
+
+    #[test]
+    fn test_transformer_dimension_mismatch() {
+        use crate::splats::SplatStore;
+        use ndarray::Array2;
+
+        let mut config = M2MConfig::default();
+        config.latent_dim = 8;
+        config.max_splats = 100;
+        config.finalize();
+
+        let mut store = SplatStore::new(config);
+
+        // Wrong dimension
+        let data = Array2::zeros((10, 4));
+        let result = store.ingest_with_transformer(&data, 3, 42);
+        assert!(result.is_err(), "Should fail with dimension mismatch");
     }
 }
 

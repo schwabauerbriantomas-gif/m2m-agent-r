@@ -1,6 +1,7 @@
 //! SplatStore - Main API for M2M Vector Search.
 //! Ported from Python splats.py. CPU-only.
 
+use crate::dataset_transformer;
 use ndarray::{Array1, Array2, ArrayView1};
 
 use crate::config::M2MConfig;
@@ -257,6 +258,122 @@ impl SplatStore {
     pub fn get_kappa(&self) -> Option<Array1<f32>> {
         if self.n_active == 0 { return None; }
         Some(self.kappa.slice(ndarray::s![..self.n_active]).to_owned())
+    }
+
+    /// Ingest raw vectors via DatasetTransformer pipeline.
+    ///
+    /// Normalizes data using fit_transform, clusters into Gaussian Splats
+    /// via KMeans, and loads resulting splat centroids into the store.
+    /// Returns (splat count, compression ratio, transform stats).
+    pub fn ingest_with_transformer(
+        &mut self,
+        data: &Array2<f32>,
+        n_clusters: usize,
+        seed: u64,
+    ) -> Result<(usize, f64, dataset_transformer::TransformStats), String> {
+        let (_, dim) = data.dim();
+        if dim != self.config.latent_dim {
+            return Err(format!(
+                "Data dimension {} != config latent_dim {}",
+                dim, self.config.latent_dim
+            ));
+        }
+
+        let tconfig = dataset_transformer::TransformConfig {
+            normalize: true,
+            center: true,
+            unit_sphere: true,
+            augment_noise: 0.0,
+            augment_flip: false,
+            ..Default::default()
+        };
+        let mut transformer = dataset_transformer::DatasetTransformer::new(tconfig);
+        let transformed = transformer.fit_transform(data);
+
+        let min_cluster_size = 1;
+        let (splats, _hierarchy, _partition, stats) =
+            transformer.to_splats(&transformed, n_clusters, min_cluster_size, seed);
+
+        if splats.is_empty() {
+            return Err("Transformer produced 0 splats".into());
+        }
+        if splats.len() > self.max_splats {
+            return Err(format!(
+                "Too many splats: {} > max {}",
+                splats.len(),
+                self.max_splats
+            ));
+        }
+
+        // Load splat centroids as mu
+        let n = splats.len();
+        let mu_arr = Array2::from_shape_vec(
+            (n, dim),
+            splats.iter().flat_map(|s| s.mu.clone()).collect(),
+        )
+        .unwrap();
+        let alpha_arr: Vec<f32> = splats.iter().map(|s| s.alpha as f32).collect();
+        let kappa_arr: Vec<f32> = splats.iter().map(|s| s.kappa as f32).collect();
+
+        self.load_splats(&mu_arr, &alpha_arr, &kappa_arr)?;
+        Ok((n, stats.compression_ratio, stats))
+    }
+
+    /// Ingest raw vectors with hierarchical clustering pipeline.
+    ///
+    /// Uses two-level KMeans (coarse then fine) for better cluster quality
+    /// on large datasets. Returns transform stats.
+    pub fn ingest_hierarchical(
+        &mut self,
+        data: &Array2<f32>,
+        n_clusters: usize,
+        min_cluster_size: usize,
+        seed: u64,
+    ) -> Result<(usize, f64, dataset_transformer::TransformStats), String> {
+        let (_, dim) = data.dim();
+        if dim != self.config.latent_dim {
+            return Err(format!(
+                "Data dimension {} != config latent_dim {}",
+                dim, self.config.latent_dim
+            ));
+        }
+
+        let tconfig = dataset_transformer::TransformConfig {
+            normalize: true,
+            center: true,
+            unit_sphere: true,
+            augment_noise: 0.0,
+            augment_flip: false,
+            ..Default::default()
+        };
+        let mut transformer = dataset_transformer::DatasetTransformer::new(tconfig);
+        let transformed = transformer.fit_transform(data);
+
+        let (splats, _hierarchy, _partition, stats) =
+            transformer.to_splats_hierarchical(&transformed, n_clusters, min_cluster_size, seed);
+
+        if splats.is_empty() {
+            return Err("Hierarchical transformer produced 0 splats".into());
+        }
+        if splats.len() > self.max_splats {
+            return Err(format!(
+                "Too many splats: {} > max {}",
+                splats.len(),
+                self.max_splats
+            ));
+        }
+
+        let n = splats.len();
+        let mu_arr = Array2::from_shape_vec(
+            (n, dim),
+            splats.iter().flat_map(|s| s.mu.clone()).collect(),
+        )
+        .unwrap();
+        let alpha_arr: Vec<f32> = splats.iter().map(|s| s.alpha as f32).collect();
+        let kappa_arr: Vec<f32> = splats.iter().map(|s| s.kappa as f32).collect();
+
+        self.load_splats(&mu_arr, &alpha_arr, &kappa_arr)?;
+        Ok((n, stats.compression_ratio, stats))
     }
 }
 
