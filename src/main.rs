@@ -184,6 +184,32 @@ enum Commands {
 
     /// Show quantization statistics
     QuantStatus,
+
+    /// Show GPU/CUDA status and info
+    GpuInfo,
+
+    /// Benchmark GPU vs CPU search performance
+    BenchGpu {
+        /// Number of vectors to generate
+        #[arg(short = 'n', long, default_value = "10000")]
+        n_vectors: usize,
+
+        /// Vector dimension
+        #[arg(short = 'd', long, default_value = "640")]
+        dim: usize,
+
+        /// Number of queries
+        #[arg(short = 'q', long, default_value = "100")]
+        n_queries: usize,
+
+        /// Top-k
+        #[arg(short = 'k', long, default_value = "10")]
+        top_k: usize,
+
+        /// Metric: l2 or cosine
+        #[arg(short, long, default_value = "l2")]
+        metric: String,
+    },
 }
 
 fn make_config(dim: usize, max_splats: usize) -> M2MConfig {
@@ -644,7 +670,7 @@ fn main() {
             let cfg_3bit = QuantConfig::for_max_compression(cli.dim);
             let qs_3bit = QuantizedStore::new(cli.dim, cfg_3bit).unwrap();
 
-            println!("{}", serde_json::json!({
+            println!("{}", serde_json::json!( {
                 "dim": cli.dim,
                 "presets": {
                     "search_8bit": {
@@ -672,6 +698,84 @@ fn main() {
                     "Instant indexing: no offline training phase",
                     "Unbiased inner product estimation",
                 ],
+            }));
+        }
+
+        Commands::GpuInfo => {
+            let cuda_available = m2m_vector_search::gpu::is_cuda_available();
+            let gpu_info = m2m_vector_search::gpu::gpu_info();
+            let device = m2m_vector_search::config::detect_device();
+
+            println!("{}", serde_json::json!({
+                "device": device,
+                "cuda_available": cuda_available,
+                "gpu_info": gpu_info,
+                "cuda_feature": {
+                    "compiled": cfg!(feature = "cuda"),
+                },
+            }));
+        }
+
+        Commands::BenchGpu { n_vectors, dim, n_queries, top_k, metric } => {
+            use std::time::Instant;
+
+            // Generate random dataset
+            eprintln!("[m2m] Generating {} vectors ({}D)...", n_vectors, dim);
+            let mut rng = rand::thread_rng();
+            let dataset: Vec<f32> = (0..n_vectors * dim)
+                .map(|_| rand::Rng::gen_range(&mut rng, -1.0..1.0))
+                .collect();
+            let queries: Vec<f32> = (0..n_queries * dim)
+                .map(|_| rand::Rng::gen_range(&mut rng, -1.0..1.0))
+                .collect();
+
+            // CPU benchmark
+            eprintln!("[m2m] CPU benchmark...");
+            let t0 = Instant::now();
+            let cpu_results = m2m_vector_search::gpu::batch_search(
+                &queries, n_queries, &dataset, n_vectors, dim, top_k, &metric,
+            );
+            let cpu_ms = t0.elapsed().as_millis() as f64;
+
+            // GPU benchmark (if available)
+            let gpu_ms = if m2m_vector_search::gpu::is_cuda_available() {
+                eprintln!("[m2m] GPU benchmark...");
+                let t1 = Instant::now();
+                let gpu_results = m2m_vector_search::gpu::batch_search(
+                    &queries, n_queries, &dataset, n_vectors, dim, top_k, &metric,
+                );
+                let gpu_time = t1.elapsed().as_millis() as f64;
+
+                // Verify GPU matches CPU
+                let matches = cpu_results.len() == gpu_results.len()
+                    && cpu_results.iter().zip(gpu_results.iter())
+                        .all(|(c, g)| c.0.first() == g.0.first());
+
+                eprintln!("[m2m] GPU/CPU results match: {}", matches);
+                Some(gpu_time)
+            } else {
+                None
+            };
+
+            println!("{}", serde_json::json!({
+                "config": {
+                    "n_vectors": n_vectors,
+                    "dim": dim,
+                    "n_queries": n_queries,
+                    "top_k": top_k,
+                    "metric": metric,
+                },
+                "cpu": {
+                    "total_ms": cpu_ms,
+                    "per_query_us": cpu_ms / n_queries as f64 * 1000.0,
+                    "qps": n_queries as f64 / (cpu_ms / 1000.0),
+                },
+                "gpu": gpu_ms.map(|ms| serde_json::json!({
+                    "total_ms": ms,
+                    "per_query_us": ms / n_queries as f64 * 1000.0,
+                    "qps": n_queries as f64 / (ms / 1000.0),
+                    "speedup": cpu_ms / ms,
+                })),
             }));
         }
     }
