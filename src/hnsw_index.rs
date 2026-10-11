@@ -11,6 +11,11 @@ use rand::SeedableRng;
 
 use crate::interfaces::{IndexSearchResult, VectorIndex};
 
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+/// Global counter of distance computations (rho_HNSW instrumentation).
+pub static HNSW_DIST_COMPUTATIONS: AtomicU64 = AtomicU64::new(0);
+
 /// Wrapper for (distance, index) that implements Ord for min-heap.
 #[derive(Clone, Copy, Debug)]
 struct DistIdx(f32, usize);
@@ -88,6 +93,11 @@ impl HNSWIndex {
         }
     }
 
+    /// Set ef_search at runtime (rho_HNSW sweep).
+    pub fn set_ef_search(&mut self, ef: usize) {
+        self.ef_search = ef;
+    }
+
     fn random_level(&mut self) -> usize {
         let r: f64 = self.rng.gen();
         (-(r.ln()) * self.level_mult) as usize
@@ -95,6 +105,7 @@ impl HNSWIndex {
 
     #[inline]
     fn distance(&self, a: &[f32], b: &[f32]) -> f32 {
+        HNSW_DIST_COMPUTATIONS.fetch_add(1, AtomicOrdering::Relaxed);
         if self.metric == "cosine" {
             let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
             let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
