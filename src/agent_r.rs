@@ -716,7 +716,109 @@ mod tests {
 
         let result = agent.preflight("generate_data", &["data"]);
         assert!(!result.proceed);
-        assert!(result.warnings.iter().any(|w| w.contains("BLOCKED")));
+        // Dedup: 3 registrations of the same (operation, what) pattern collapse
+        // into ONE warning carrying its recurrence, not 3 identical warnings.
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("BLOCKED (3x)"));
+        assert_eq!(result.precautions.len(), 1);
+        // All 3 records were still recalled as relevant history
+        assert_eq!(result.relevant_errors, 3);
+    }
+
+    #[test]
+    fn test_operacion_nueva_no_bloqueada() {
+        // R1 critical bug: `never_seen_op` got proceed:false because substring
+        // matching made it "related" to generate_benchmarks errors. With exact
+        // matching, an operation with no exact history and no shared tags must
+        // recall nothing and proceed.
+        let mut agent = AgentR::new();
+        for _ in 0..3 {
+            agent.record_error(
+                ErrorCategory::Fabrication, ErrorSeverity::Critical,
+                "generate_benchmarks", "Invented benchmark data", "Skipped testing",
+                &["benchmarks", "GPU"], "Only use validated data",
+            );
+        }
+
+        let result = agent.preflight("never_seen_op", &[]);
+        assert!(result.proceed, "unrelated new operation must not be blocked");
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.relevant_errors, 0);
+    }
+
+    #[test]
+    fn test_operacion_cruzada_no_bloqueada() {
+        // Superstring/substring pairs must not cross-match anymore:
+        // "bench" is a substring of "generate_benchmarks", but with exact
+        // matching (and no shared tags) there is no relation.
+        let mut agent = AgentR::new();
+        for _ in 0..3 {
+            agent.record_error(
+                ErrorCategory::Fabrication, ErrorSeverity::Critical,
+                "generate_benchmarks", "Invented benchmark data", "Skipped testing",
+                &["benchmarks"], "Only use validated data",
+            );
+        }
+
+        let result = agent.preflight("bench", &[]);
+        assert!(result.proceed, "substring-related operation must not be blocked");
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.relevant_errors, 0);
+    }
+
+    #[test]
+    fn test_dedup_warnings() {
+        // Same pattern registered N times => ONE warning + ONE precaution,
+        // with recurrence surfaced in the message.
+        let mut agent = AgentR::new();
+        for _ in 0..5 {
+            agent.record_error(
+                ErrorCategory::StateCorruption, ErrorSeverity::Critical,
+                "db_write", "Corrupted index on write", "No fsync",
+                &["db"], "fsync before ack",
+            );
+        }
+
+        let result = agent.preflight("db_write", &["db"]);
+        assert!(!result.proceed);
+        assert_eq!(result.warnings.len(), 1, "N identical registrations must collapse to 1 warning");
+        assert!(result.warnings[0].contains("(5x)"));
+        assert_eq!(result.precautions.len(), 1);
+        // relevant_errors counts recalled records (5), not deduped patterns (1)
+        assert_eq!(result.relevant_errors, 5);
+    }
+
+    #[test]
+    fn test_recencia_vs_now() {
+        // Recency must be computed against SystemTime::now(), not against the
+        // last inserted error. An error recorded 48h ago scores ZERO recency
+        // even if it is the most recent one in memory.
+        let mut agent = AgentR::new();
+        let id = agent.record_error(
+            ErrorCategory::Fabrication, ErrorSeverity::Warning,
+            "old_op", "Old failure", "Ancient",
+            &[], "Nothing",
+        );
+        // Age the record to 48h ago (timestamp is pub, test can adjust it)
+        agent.errors[0].timestamp -= 48.0 * 3600.0;
+
+        let found = agent.recall_errors("old_op", &[]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, id);
+        // With no tags, the only remaining component is the exact-op match
+        // (10.0) — recency contributes 0 because 48h > 24h window.
+        // We can't observe the score directly, but we assert the semantics:
+        // the record is still recalled via exact match, and a same-second
+        // fresh record outscores it (ordering check below).
+        let fresh_id = agent.record_error(
+            ErrorCategory::Fabrication, ErrorSeverity::Warning,
+            "old_op", "Fresh failure of same op", "Recent",
+            &[], "Nothing",
+        );
+        let found = agent.recall_errors("old_op", &[]);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].id, fresh_id, "fresh record must outrank the 48h-old one");
+        assert_eq!(found[1].id, id);
     }
 
     #[test]
