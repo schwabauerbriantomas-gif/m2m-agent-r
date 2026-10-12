@@ -279,6 +279,16 @@ impl AgentR {
 
     /// Run pre-flight checks before an operation.
     /// Recalls relevant past errors and generates warnings/precautions.
+    ///
+    /// Blocking gate (deliberately conservative): an operation is blocked ONLY
+    /// by an exact-operation Critical error with recurrence >= 2. Thanks to
+    /// exact-match recall, an operation with no history (or history only under
+    /// a different name) NEVER inherits blocks — fixes the critical bug where
+    /// `never_seen_op` was blocked by `generate_benchmarks` errors (R1).
+    ///
+    /// Warnings and precautions are deduplicated by (operation, what) /
+    /// (operation, prevention): a pattern registered N times surfaces as ONE
+    /// entry carrying its recurrence, not N identical strings.
     pub fn preflight(&mut self, operation: &str, tags: &[&str]) -> PreflightResult {
         self.stats.total_preflights += 1;
 
@@ -287,12 +297,21 @@ impl AgentR {
         let mut precautions = Vec::new();
         let mut should_block = false;
 
+        // Collapse repeated records of the same pattern: key = (operation, what)
+        let mut seen_pattern: HashSet<(&str, &str)> = HashSet::new();
+        let mut seen_prevention: HashSet<(&str, &str)> = HashSet::new();
+
         for error in &relevant {
+            let pattern_key = (error.operation.as_str(), error.what.as_str());
+            if !seen_pattern.insert(pattern_key) {
+                continue; // duplicate registration of the same failure pattern
+            }
+
             if error.severity == ErrorSeverity::Critical && error.recurrence >= 2 {
                 should_block = true;
                 warnings.push(format!(
-                    "BLOCKED: Recurring critical error in '{}': {}",
-                    error.operation, error.what
+                    "BLOCKED ({}x): Recurring critical error in '{}': {}",
+                    error.recurrence + 1, error.operation, error.what
                 ));
             } else if error.severity == ErrorSeverity::Critical {
                 warnings.push(format!(
@@ -302,7 +321,10 @@ impl AgentR {
             }
 
             if !error.prevention.is_empty() {
-                precautions.push(format!("[{}] {}", error.operation, error.prevention));
+                let prevention_key = (error.operation.as_str(), error.prevention.as_str());
+                if seen_prevention.insert(prevention_key) {
+                    precautions.push(format!("[{}] {}", error.operation, error.prevention));
+                }
             }
         }
 
