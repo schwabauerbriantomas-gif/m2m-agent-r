@@ -76,26 +76,30 @@ fn main() {
         bin16(15), bin16(85), bin16(99), bin16(82));
 
     // ── 3) DEDIUM: estabilidad de punteros heap con Vec append-only ────
+    // (Usamos un espejo del layout LEGACY: el principio DEDIUM es el mismo
+    //  para Box<str> del layout nuevo — dato en heap, puntero inline.)
+    #[derive(Clone)]
+    struct LegacyRecord {
+        operation: String,
+        what: String,
+        why: String,
+        context_tags: Vec<String>,
+        prevention: String,
+    }
     println!("\n== estabilidad de punteros (DEDIUM) ==");
-    let mut v: Vec<ErrorRecord> = Vec::new();
+    let mut v: Vec<LegacyRecord> = Vec::new();
     for i in 0..1000u64 {
-        v.push(ErrorRecord {
-            id: i,
-            timestamp: i as f64,
-            category: ErrorCategory::Other,
-            severity: ErrorSeverity::Warning,
+        v.push(LegacyRecord {
             operation: format!("op_{i}"),
             what: format!("what_{i}"),
             why: format!("why_{i}"),
             context_tags: vec!["gpu".to_string(), "ci".to_string()],
             prevention: format!("prev_{i}"),
-            recurrence: 0,
-            pattern_id: None,
         });
     }
     // El realloc del Vec<ErrorRecord> MUEVE los structs (inline) pero los datos
     // heap de cada String quedan donde estaban: verificamos con 3 registros.
-    let probe = |v: &Vec<ErrorRecord>, tag: &str| {
+    let probe = |v: &Vec<LegacyRecord>, tag: &str| {
         for idx in [0usize, 500, 999] {
             let e = &v[idx];
             println!(
@@ -110,18 +114,12 @@ fn main() {
     // 1000 pushes más SIN limpiar: si el Vec realloca, los structs se mueven,
     // los punteros heap de los Strings NO.
     for i in 1000..2000u64 {
-        v.push(ErrorRecord {
-            id: i,
-            timestamp: i as f64,
-            category: ErrorCategory::Other,
-            severity: ErrorSeverity::Warning,
+        v.push(LegacyRecord {
             operation: format!("op_{i}"),
             what: format!("what_{i}"),
             why: format!("why_{i}"),
             context_tags: vec!["gpu".to_string()],
             prevention: format!("prev_{i}"),
-            recurrence: 0,
-            pattern_id: None,
         });
     }
     probe(&v, "tras 2000 pushes");
