@@ -98,6 +98,31 @@ solo cambia `<BIN>`), y **siempre** medianas de 3 corridas mínimas.
 - `scripts/rambench/aggregate.py` — medianas y JSON final.
 - `examples/rambench_anatomy.rs` — size_of + proyección de escala.
 
+## Extensión nocap (branch `ar2/rambench-nocap`) — la firma real sin el cap
+
+Mismo harness, binario con el único cambio `MAX_ERRORS: 10_000 → 2_000_000` en
+`src/agent_r.rs`. Datos en `reports/rambench_nocap.json`,
+`reports/rambench_raw_nocap/` y `reports/rambench_raw_nocap/run_1m_abort.json`.
+
+| N | ΔRSS (KB) | preflight p50 (ms) | p95 (ms) | B/registro |
+|---|---|---|---|---|
+| 10 000 | 8 000 | 2.53 | 2.91 | 819 (piso ~1 MB) |
+| 50 000 | 34 564 | 10.02 | 11.51 | 707 |
+| 100 000 | 67 388 | 19.50 | 21.77 | 690 |
+| 301 175 (abort controlado) | 207 316 vivo / 206 644 peak | — | — | 705 |
+
+- **RAM lineal ~700 B/registro** en los 4 puntos ⇒ 1M completo ≈ **0.67–0.70 GiB**.
+- **La latencia también escala lineal**: p50 ×7.7 de 10k→100k (recall O(n) + clon del Vec de scores).
+- **La ingesta es O(n²) total**: `record_error` escanea el Vec 2× por POST
+  (recurrence en agent_r.rs:176, pattern_id en :181). RPS medidos: ~730 limpio
+  → **13.2 rps @288k aceptados** ⇒ la corrida 1M completa tardaría ~15 h; se
+  dejó datapoint con aborto en 301k (timeline `rss_1m_abort_timeline.txt`, stats+RSS cada 30 s).
+- Contraste con el baseline capado: con cap, el preflight casi no se degrada
+  (2.6→3.0 ms) pero la RAM crece igual por churn; sin cap, la RAM es honesta
+  (~700 B/err) y la latencia explota. **Ninguna configuración escala a 1M**:
+  esa es la justificación cuantitativa de las oleadas 3-5 (SQLite + top-N residente).
+- Reproducir: `bash scripts/rambench/nocap_1m_abort.sh` (env `PORT_1M`, `ABORT_AT`, `BIN`, `OUT_DIR`).
+
 ## Hallazgos del baseline (para oleadas siguientes)
 
 1. **La eviction actual no controla memoria** (R1 la marcó O(n)); su churn
