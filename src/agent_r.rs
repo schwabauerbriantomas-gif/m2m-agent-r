@@ -119,7 +119,7 @@ pub struct AgentRStats {
     pub top_recurring_patterns: Vec<(String, u32)>,
 }
 
-const MAX_ERRORS: usize = 10_000;
+const MAX_ERRORS: usize = 2_000_000; // rambench-nocap: relevo el cap para medir la firma real (solo en este branch)
 const MAX_REASONING_STEPS: usize = 1000;
 const REPETITION_THRESHOLD: usize = 3;
 
