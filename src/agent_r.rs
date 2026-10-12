@@ -11,7 +11,8 @@
 //! Reference: Agent-R methodology (self-correcting AI with reflective memory)
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::cmp::Reverse;
+use std::collections::{BinaryHeap, HashMap};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Severity of a recorded error.
@@ -216,49 +217,80 @@ impl AgentR {
     }
 
     /// Search error memory for relevant past errors.
+    ///
+    /// OPT (opt/opt_recall): top-20 por selección en un solo pase con un
+    /// min-heap acotado a 20, en vez de materializar un Vec de n scores y
+    /// ordenarlo completo (O(n log n)). El scoring por registro es idéntico
+    /// al original; el desempate es por índice (posición en memoria) para
+    /// reproducir el orden del `sort_by` estable sobre el Vec original
+    /// (mismos scores => mismo orden de salida).
+    /// Medido @100k: scan+Vec+sort 13.6 ms vs single-pass 5.6 ms (micro-bench
+    /// bench/micro_scan_vs_sort.rs); además elimina la asignación de un Vec
+    /// de n elementos por preflight (~1.6 MB @100k).
     pub fn recall_errors(&self, operation: &str, tags: &[&str]) -> Vec<&ErrorRecord> {
-        let mut scored: Vec<(f64, &ErrorRecord)> = self.errors.iter()
-            .filter_map(|e| {
-                let mut score = 0.0;
+        const TOP: usize = 20;
+        let last_ts = self.errors.last().map(|e| e.timestamp).unwrap_or(0.0);
 
-                // Exact operation match
-                if e.operation == operation {
-                    score += 10.0;
-                } else if e.operation.contains(operation) || operation.contains(&e.operation) {
-                    score += 5.0;
+        // Min-heap de los TOP mejores. Clave: (score_bits, Reverse(idx)).
+        // - score como bits => Ord total en f64 (scores finitos >= 0).
+        // - Reverse(idx): entre scores iguales el "peor" es el de índice MAYOR
+        //   (el sort estable del código original conserva índice menor), y un
+        //   candidato con score empatado NUNCA desplaza a un residente =>
+        //   salida idéntica a `sort_by` estable + take(20) en todos los casos,
+        //   incluidos empates que cruzan el corte del top-20.
+        let mut heap: BinaryHeap<Reverse<(u64, Reverse<usize>)>> = BinaryHeap::with_capacity(TOP + 1);
+
+        for (idx, e) in self.errors.iter().enumerate() {
+            let mut score = 0.0;
+
+            // Exact operation match
+            if e.operation == operation {
+                score += 10.0;
+            } else if e.operation.contains(operation) || operation.contains(&e.operation) {
+                score += 5.0;
+            }
+
+            // Tag overlap
+            for tag in tags {
+                if e.context_tags.iter().any(|t| t == tag) {
+                    score += 3.0;
                 }
+            }
 
-                // Tag overlap
-                for tag in tags {
-                    if e.context_tags.iter().any(|t| t == tag) {
-                        score += 3.0;
-                    }
-                }
+            // Recency bonus (more recent = higher score)
+            let age_hours = (last_ts - e.timestamp) / 3600.0;
+            score += (24.0 - age_hours.min(24.0)) * 0.5;
 
-                // Recency bonus (more recent = higher score)
-                let age_hours = (self.errors.last().map(|e| e.timestamp).unwrap_or(0.0) - e.timestamp) / 3600.0;
-                score += (24.0 - age_hours.min(24.0)) * 0.5;
+            // Recurrence penalty — recurring errors are more important
+            score += e.recurrence as f64 * 2.0;
 
-                // Recurrence penalty — recurring errors are more important
-                score += e.recurrence as f64 * 2.0;
+            // Severity bonus
+            score += match e.severity {
+                ErrorSeverity::Critical => 5.0,
+                ErrorSeverity::Error => 3.0,
+                ErrorSeverity::Warning => 1.0,
+            };
 
-                // Severity bonus
-                score += match e.severity {
-                    ErrorSeverity::Critical => 5.0,
-                    ErrorSeverity::Error => 3.0,
-                    ErrorSeverity::Warning => 1.0,
-                };
+            if score <= 0.0 {
+                continue;
+            }
 
-                if score > 0.0 {
-                    Some((score, e))
-                } else {
-                    None
-                }
-            })
-            .collect();
+            let key = (score.to_bits(), Reverse(idx));
+            if heap.len() < TOP {
+                heap.push(Reverse(key));
+            } else if heap.peek().is_some_and(|Reverse(worst)| *worst < key) {
+                heap.pop();
+                heap.push(Reverse(key));
+            }
+        }
 
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        scored.into_iter().take(20).map(|(_, e)| e).collect()
+        // Extraer en orden descendente: pop del min-heap => ascendente; revertir.
+        let mut out: Vec<&ErrorRecord> = Vec::with_capacity(heap.len());
+        while let Some(Reverse((_, Reverse(idx)))) = heap.pop() {
+            out.push(&self.errors[idx]);
+        }
+        out.reverse();
+        out
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -653,6 +685,84 @@ impl Default for AgentR {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// OPT (opt/opt_recall): paridad del top-20 por min-heap acotado contra la
+    /// implementación de referencia (Vec de scores + sort estable + take(20)).
+    /// Misma secuencia de record_error que el micro-bench del harness
+    /// (bench/micro_scan_vs_sort.rs): 500 registros, operaciones/tags
+    /// superpuestos, severities mezcladas, empates de score garantizados.
+    #[test]
+    fn test_recall_top20_paridad_con_sort() {
+        let mut agent = AgentR::new();
+        let ops = ["reindex_collection", "store_memory", "search_similar",
+                   "rebuild_hnsw_index", "merge_splats", "distill_lessons",
+                   "route_query", "gc_expired_splats"];
+        let tags_pool = ["gpu", "cpu", "ci", "prod", "index", "retry", "hnsw"];
+        for i in 0..500 {
+            let op = ops[i % ops.len()];
+            let t1 = tags_pool[i % tags_pool.len()];
+            let t2 = tags_pool[(i * 3 + 1) % tags_pool.len()];
+            let cat = match i % 5 {
+                0 => ErrorCategory::CircularReasoning,
+                1 => ErrorCategory::OutputDrift,
+                2 => ErrorCategory::Fabrication,
+                3 => ErrorCategory::BadAssumption,
+                _ => ErrorCategory::Timeout,
+            };
+            agent.record_error(
+                cat,
+                match i % 3 {
+                    0 => ErrorSeverity::Critical,
+                    1 => ErrorSeverity::Error,
+                    _ => ErrorSeverity::Warning,
+                },
+                op, &format!("what {i}"), &format!("why {i}"),
+                &[t1, t2], &format!("prev {i}"),
+            );
+        }
+
+        // Referencia: replicar el código original (Vec + sort estable + take 20).
+        let ref_top: Vec<(f64, u64)> = {
+            let last_ts = agent.errors.last().map(|e| e.timestamp).unwrap_or(0.0);
+            let mut scored: Vec<(f64, usize)> = agent.errors.iter().enumerate()
+                .map(|(idx, e)| {
+                    let mut s = 0.0;
+                    if e.operation == "distill_lessons" { s += 10.0; }
+                    else if e.operation.contains("distill_lessons") || "distill_lessons".contains(&e.operation) { s += 5.0; }
+                    for t in ["gpu", "ci"] { if e.context_tags.iter().any(|x| x == t) { s += 3.0; } }
+                    let age_h = (last_ts - e.timestamp) / 3600.0;
+                    s += (24.0 - age_h.min(24.0)) * 0.5;
+                    s += e.recurrence as f64 * 2.0;
+                    s += match e.severity { ErrorSeverity::Critical => 5.0, ErrorSeverity::Error => 3.0, ErrorSeverity::Warning => 1.0 };
+                    (s, idx)
+                })
+                .filter(|(s, _)| *s > 0.0)
+                .collect();
+            scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            scored.into_iter().take(20).map(|(s, idx)| (s, agent.errors[idx].id)).collect()
+        };
+
+        let got: Vec<(f64, u64)> = agent.recall_errors("distill_lessons", &["gpu", "ci"])
+            .into_iter().map(|e| (recurrence_only_score(e, "distill_lessons", &["gpu", "ci"], agent.errors.last().map(|x| x.timestamp).unwrap_or(0.0)), e.id))
+            .collect();
+        let got_ids: Vec<u64> = got.iter().map(|(_, id)| *id).collect();
+        let ref_ids: Vec<u64> = ref_top.iter().map(|(_, id)| *id).collect();
+        assert_eq!(got_ids, ref_ids, "top-20 heap != top-20 sort estable");
+    }
+
+    /// Recalcula el score de un registro para verificar paridad de scores
+    /// (helper del test de paridad).
+    fn recurrence_only_score(e: &ErrorRecord, operation: &str, tags: &[&str], last_ts: f64) -> f64 {
+        let mut s = 0.0;
+        if e.operation == operation { s += 10.0; }
+        else if e.operation.contains(operation) || operation.contains(&e.operation) { s += 5.0; }
+        for t in tags { if e.context_tags.iter().any(|x| x == t) { s += 3.0; } }
+        let age_h = (last_ts - e.timestamp) / 3600.0;
+        s += (24.0 - age_h.min(24.0)) * 0.5;
+        s += e.recurrence as f64 * 2.0;
+        s += match e.severity { ErrorSeverity::Critical => 5.0, ErrorSeverity::Error => 3.0, ErrorSeverity::Warning => 1.0 };
+        s
+    }
 
     #[test]
     fn test_record_and_recall() {
