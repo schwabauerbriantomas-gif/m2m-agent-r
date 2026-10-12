@@ -1,6 +1,15 @@
 //! SplatStore - Main API for M2M Vector Search.
 //! Ported from Python splats.py. CPU-only.
 
+/// Compute squared L2 distance between two slices.
+fn l2_distance_sq(a: &[f32], b: &[f32]) -> f32 {
+    a.iter().zip(b.iter()).map(|(x, y)| { let d = x - y; d * d }).sum()
+}
+
+/// Compute L2 distance between two slices.
+fn l2_distance(a: &[f32], b: &[f32]) -> f32 {
+    l2_distance_sq(a, b).sqrt()
+}
 use crate::dataset_transformer;
 use crate::interfaces::VectorIndex;
 use ndarray::{Array1, Array2, ArrayView1};
@@ -39,6 +48,9 @@ pub struct SplatStore {
     quant_store: Option<crate::quantization::QuantizedStore>,
     hnsw: Option<crate::hnsw_index::HNSWIndex>,
     lsh: Option<crate::lsh_index::CrossPolytopeLSH>,
+    // Optional persistence callback invoked after mutations.
+    // Signature: (operation_name, n_affected) -> Result<(), String>.
+    on_persist: Option<Box<dyn Fn(&str, usize) -> Result<(), String> + Send + Sync>>,
     // Semantic memory is a separate layer (it contains its own SplatStore internally,
     // so we can't embed it here without creating a cycle). Use has_semantic_memory()
     // to check if the preset enables it, then manage SemanticMemoryDB externally.
@@ -96,8 +108,6 @@ impl SplatStore {
             None
         };
 
-        let semantic_enabled = config.enable_semantic_memory;
-
         Self {
             config,
             max_splats,
@@ -111,12 +121,20 @@ impl SplatStore {
             quant_store,
             hnsw,
             lsh,
+            on_persist: None,
         }
     }
 
     /// Add a batch of splat vectors. Returns false if capacity exceeded.
     pub fn add_splat(&mut self, x: &Array2<f32>) -> bool {
         let n_new = x.nrows();
+        if n_new == 0 {
+            return false;
+        }
+        if x.ncols() != self.mu.ncols() {
+            eprintln!("Dimension mismatch: expected {}, got {}", self.mu.ncols(), x.ncols());
+            return false;
+        }
         if self.n_active + n_new > self.max_splats {
             return false;
         }
@@ -128,6 +146,7 @@ impl SplatStore {
         }
         self.n_active += n_new;
         self.next_id += n_new as u64;
+        self.persist_op("add_splat", n_new);
         true
     }
 
@@ -164,6 +183,7 @@ impl SplatStore {
     }
 
     /// Find k nearest neighbors for a single query.
+    /// Uses available indexes (HNSW/LSH) when built, falls back to linear scan.
     pub fn find_neighbors(&self, query: &ArrayView1<f32>, k: usize) -> Vec<NeighborResult> {
         let n = self.n_active;
         if n == 0 || k == 0 {
@@ -172,10 +192,44 @@ impl SplatStore {
         let k = k.min(n);
         let index_data = self.mu.slice(ndarray::s![..n, ..]);
 
-        // Squared L2 distances
+        // Try HNSW first (fastest approximate search)
+        if let Some(ref hnsw) = self.hnsw {
+            let hresults = hnsw.search(query.clone(), k);
+            return hresults.indices.iter().zip(hresults.distances.iter())
+                .filter(|(&idx, _)| idx < n)
+                .take(k)
+                .map(|(&idx, &dist)| NeighborResult {
+                    mu: index_data.row(idx).to_vec(),
+                    alpha: self.alpha[idx],
+                    kappa: self.kappa[idx],
+                    index: idx,
+                    distance: dist,
+                })
+                .collect();
+        }
+
+        // Try LSH next
+        if let Some(ref lsh) = self.lsh {
+            let (indices, dists) = lsh.query(query, k);
+            if !indices.is_empty() {
+                return indices.iter().zip(dists.iter())
+                    .filter(|(&idx, _)| idx < n)
+                    .take(k)
+                    .map(|(&idx, &dist)| NeighborResult {
+                        mu: index_data.row(idx).to_vec(),
+                        alpha: self.alpha[idx],
+                        kappa: self.kappa[idx],
+                        index: idx,
+                        distance: dist,
+                    })
+                    .collect();
+            }
+        }
+
+        // Fallback: linear scan
         let dists_sq: Vec<f32> = index_data
             .outer_iter()
-            .map(|row| row.iter().zip(query.iter()).map(|(a, b)| { let d = a - b; d * d }).sum())
+            .map(|row| l2_distance_sq(row.as_slice().unwrap_or(&[]), query.as_slice().unwrap_or(&[])))
             .collect();
 
         // Partial sort top-k
@@ -199,32 +253,43 @@ impl SplatStore {
 
     /// Find k nearest neighbors using ALL enabled search backends.
     ///
-    /// Fuses results from:
-    /// - Linear scan (primary, always)
-    /// - Quantized search (if enable_quantization)
-    /// - HNSW search (if enable_hnsw)
-    /// - LSH search (if enable_lsh)
-    ///
-    /// Returns fused results ranked by distance.
+    /// Fuses results from index backends (HNSW, LSH, Quantized) first.
+    /// Falls back to linear scan only when no indexes are available.
     pub fn find_neighbors_fused(&self, query: &ArrayView1<f32>, k: usize) -> Vec<NeighborResult> {
         let n = self.n_active;
         if n == 0 || k == 0 {
             return Vec::new();
         }
         let k = k.min(n);
+        let index_data = self.mu.slice(ndarray::s![..n, ..]);
 
         // Collect candidate sets from each enabled backend
         let mut candidates: std::collections::HashMap<usize, f32> = std::collections::HashMap::new();
+        let mut has_index = false;
 
-        // 1. Primary linear scan (always)
-        let index_data = self.mu.slice(ndarray::s![..n, ..]);
-        for i in 0..n {
-            let dist: f32 = index_data.row(i).iter().zip(query.iter())
-                .map(|(a, b)| { let d = a - b; d * d }).sum::<f32>().sqrt();
-            candidates.insert(i, dist);
+        // 1. HNSW search (primary)
+        if let Some(ref hnsw) = self.hnsw {
+            let hresults = hnsw.search(query.clone(), k * 2);
+            for (idx, dist) in hresults.indices.iter().zip(hresults.distances.iter()) {
+                if *idx < n {
+                    candidates.entry(*idx).and_modify(|d| *d = (*d).min(*dist)).or_insert(*dist);
+                }
+            }
+            has_index = true;
         }
 
-        // 2. Quantized search (pre-filter candidates)
+        // 2. LSH search
+        if let Some(ref lsh) = self.lsh {
+            let (indices, dists) = lsh.query(query, k * 2);
+            for (idx, dist) in indices.iter().zip(dists.iter()) {
+                if *idx < n {
+                    candidates.entry(*idx).and_modify(|d| *d = (*d).min(*dist)).or_insert(*dist);
+                }
+            }
+            has_index = true;
+        }
+
+        // 3. Quantized search
         if let Some(ref qs) = self.quant_store {
             let qresults = qs.search(query, k * 2);
             for (id, dist) in qresults {
@@ -233,25 +298,14 @@ impl SplatStore {
                     candidates.entry(idx).and_modify(|d| *d = (*d).min(dist)).or_insert(dist);
                 }
             }
+            has_index = true;
         }
 
-        // 3. HNSW search
-        if let Some(ref hnsw) = self.hnsw {
-            let hresults = hnsw.search(query.clone(), k * 2);
-            for (idx, dist) in hresults.indices.iter().zip(hresults.distances.iter()) {
-                if *idx < n {
-                    candidates.entry(*idx).and_modify(|d| *d = (*d).min(*dist)).or_insert(*dist);
-                }
-            }
-        }
-
-        // 4. LSH search
-        if let Some(ref lsh) = self.lsh {
-            let (indices, dists) = lsh.query(query, k * 2);
-            for (idx, dist) in indices.iter().zip(dists.iter()) {
-                if *idx < n {
-                    candidates.entry(*idx).and_modify(|d| *d = (*d).min(*dist)).or_insert(*dist);
-                }
+        // 4. Linear scan fallback — only if no indexes are available
+        if !has_index {
+            for i in 0..n {
+                let dist = l2_distance(index_data.row(i).as_slice().unwrap_or(&[]), query.as_slice().unwrap_or(&[]));
+                candidates.insert(i, dist);
             }
         }
 
@@ -283,6 +337,21 @@ impl SplatStore {
     /// Check if semantic memory is enabled in this preset.
     /// Note: SemanticMemoryDB must be managed externally (it wraps its own SplatStore).
     pub fn has_semantic_memory(&self) -> bool { self.config.enable_semantic_memory }
+
+    /// Set a persistence callback invoked after mutations (add_splat, compact, etc).
+    /// The callback receives (operation_name, n_affected) and should log to WAL, etc.
+    pub fn set_persist_callback(&mut self, cb: Box<dyn Fn(&str, usize) -> Result<(), String> + Send + Sync>) {
+        self.on_persist = Some(cb);
+    }
+
+    /// Invoke the persistence callback if configured.
+    fn persist_op(&self, op: &str, n: usize) {
+        if let Some(ref cb) = self.on_persist {
+            if let Err(e) = cb(op, n) {
+                eprintln!("[m2m] persist callback failed for '{}': {}", op, e);
+            }
+        }
+    }
 
     /// Batch find neighbors for multiple queries.
     pub fn find_neighbors_batch(&self, queries: &Array2<f32>, k: usize) -> Vec<Vec<NeighborResult>> {
@@ -400,6 +469,7 @@ impl SplatStore {
             self.frequency[i] = 0.0;
         }
         self.n_active = write_idx;
+        self.persist_op("compact", n - write_idx);
     }
 
     /// Get store statistics.

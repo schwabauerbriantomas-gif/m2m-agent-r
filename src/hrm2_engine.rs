@@ -49,8 +49,6 @@ pub struct HRM2Engine {
 
     cluster_indices: HashMap<usize, Vec<usize>>,
     cluster_embeddings: HashMap<usize, Array2<f32>>,
-    cluster_masks: HashMap<usize, Vec<bool>>,
-
     encoder: FullEmbeddingBuilder,
     is_indexed: bool,
     stats: HRM2Stats,
@@ -73,7 +71,6 @@ impl HRM2Engine {
             fine_assignments: HashMap::new(),
             cluster_indices: HashMap::new(),
             cluster_embeddings: HashMap::new(),
-            cluster_masks: HashMap::new(),
             encoder: FullEmbeddingBuilder::new(),
             is_indexed: false,
             stats: HRM2Stats::default(),
@@ -143,7 +140,6 @@ impl HRM2Engine {
         self.fine_assignments.clear();
         self.cluster_indices.clear();
         self.cluster_embeddings.clear();
-        self.cluster_masks.clear();
 
         for c in 0..n_coarse {
             let indices: Vec<usize> = coarse_labels.iter().enumerate()
@@ -188,7 +184,8 @@ impl HRM2Engine {
     /// Query for k nearest neighbors at given level of detail.
     pub fn query(&mut self, query: &ArrayView1<f32>, k: usize, lod: usize) -> Vec<(usize, f32)> {
         if !self.is_indexed {
-            panic!("Index not built. Call index() first.");
+            eprintln!("[m2m] Warning: query() called before index(). Returning empty results.");
+            return Vec::new();
         }
 
         let start = Instant::now();
@@ -305,7 +302,6 @@ impl HRM2Engine {
         self.fine_assignments.clear();
         self.cluster_indices.clear();
         self.cluster_embeddings.clear();
-        self.cluster_masks.clear();
         self.is_indexed = false;
         self.stats = HRM2Stats::default();
     }

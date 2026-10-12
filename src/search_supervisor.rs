@@ -149,7 +149,12 @@ impl SearchSupervisor {
 
         if available.is_empty() {
             self.stats.total_errors += 1;
-            panic!("No backends available");
+            eprintln!("[m2m] Warning: No backends available, falling back to CPU");
+            return SupervisorDecision {
+                backend: BackendType::Cpu,
+                fallback_chain: vec![],
+                reason: "No backends available, defaulting to CPU".to_string(),
+            };
         }
 
         let preference_order = self.get_preference_order(complexity, &available, query_dim);

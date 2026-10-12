@@ -38,6 +38,7 @@ pub mod gpu_vector_index;
 pub mod gpu_hierarchical_search;
 pub mod gpu_auto_tune;
 pub mod train_embeddings;
+pub mod agent_r;
 
 pub mod cluster;
 pub mod api;

@@ -145,7 +145,7 @@ impl SOCEngine {
         let start_idx = seed_point.unwrap_or_else(|| {
             self.clusters.iter()
                 .enumerate()
-                .max_by(|a, b| a.1.energy.partial_cmp(&b.1.energy).unwrap())
+                .max_by(|a, b| a.1.energy.partial_cmp(&b.1.energy).unwrap_or(std::cmp::Ordering::Equal))
                 .map(|(i, _)| i)
                 .unwrap_or(0)
         });
@@ -302,7 +302,7 @@ impl SOCEngine {
             })
             .collect();
 
-        dists.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        dists.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
         dists.iter().take(10).map(|(_, i)| *i).collect()
     }
 }

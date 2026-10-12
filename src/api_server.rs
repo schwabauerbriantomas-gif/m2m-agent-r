@@ -5,6 +5,11 @@
 //!   POST /search  - Search memories (query text, top-k)
 //!   POST /status  - Get store stats
 //!   GET  /health  - Health check
+//!   Agent-R:
+//!     POST /agent-r/record-error  - Record an error for learning
+//!     POST /agent-r/preflight     - Pre-flight check before an operation
+//!     POST /agent-r/validate      - Validate output against error patterns
+//!     GET  /agent-r/stats         - Get Agent-R statistics
 
 use axum::{
     extract::State,
@@ -20,11 +25,14 @@ use tower_http::cors::CorsLayer;
 
 use crate::splats::SplatStore;
 use crate::config::M2MConfig;
+use crate::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
 
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<Mutex<SplatStore>>,
     pub next_id: Arc<Mutex<usize>>,
+    pub agent_r: Arc<Mutex<AgentR>>,
+    pub index_dirty: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Deserialize)]
@@ -113,6 +121,7 @@ async fn store_memory(
         simple_hash_embedding(&req.text, dim)
     });
     
+    // Hold a single lock for the entire insert to prevent TOCTOU races
     let mut store = state.store.lock().await;
     let arr = Array2::from_shape_vec((1, dim), embedding.clone())
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("Bad embedding shape: {}", e)))?;
@@ -122,8 +131,9 @@ async fn store_memory(
         return Err((StatusCode::INSUFFICIENT_STORAGE, "Store full".into()));
     }
     
-    // Build index after insert for consistency
-    store.build_index();
+    // Mark index as dirty — will be rebuilt lazily or on demand
+    drop(store);
+    state.index_dirty.notify_one();
     
     let mut id_counter = state.next_id.lock().await;
     *id_counter += 1;
@@ -135,37 +145,46 @@ async fn store_memory(
     })))
 }
 
+async fn rebuild_index(State(state): State<AppState>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let mut store = state.store.lock().await;
+    store.build_index();
+    let stats = store.get_statistics();
+    Ok(Json(serde_json::json!({
+        "status": "rebuilt",
+        "n_active": store.n_active(),
+        "has_hnsw": store.has_hnsw(),
+        "has_lsh": store.has_lsh(),
+        "dimension": stats.embedding_dim,
+    })))
+}
+
 async fn search_memories(
     State(state): State<AppState>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<SearchResponse>, (StatusCode, String)> {
-    let (store, results) = {
-        let store = state.store.lock().await;
-        let dim = store.get_statistics().embedding_dim;
-        let k = req.top_k.unwrap_or(10).min(store.n_active());
-        
-        if store.n_active() == 0 {
-            return Ok(Json(SearchResponse { results: vec![] }));
-        }
-        
-        let embedding = req.embedding.unwrap_or_else(|| {
-            simple_hash_embedding(&req.query, dim)
-        });
-        
-        let query = Array1::from_vec(embedding);
-        let neighbors = store.find_neighbors(&query.view(), k);
-        
-        let search_results: Vec<SearchResult> = neighbors
-            .into_iter()
-            .map(|n| SearchResult {
-                index: n.index,
-                score: n.distance,
-                metadata: None,
-            })
-            .collect();
-        
-        (store, search_results)
-    };
+    let store = state.store.lock().await;
+    let dim = store.get_statistics().embedding_dim;
+    let k = req.top_k.unwrap_or(10).min(store.n_active());
+    
+    if store.n_active() == 0 {
+        return Ok(Json(SearchResponse { results: vec![] }));
+    }
+    
+    let embedding = req.embedding.unwrap_or_else(|| {
+        simple_hash_embedding(&req.query, dim)
+    });
+    
+    let query = Array1::from_vec(embedding);
+    let neighbors = store.find_neighbors(&query.view(), k);
+    
+    let results: Vec<SearchResult> = neighbors
+        .into_iter()
+        .map(|n| SearchResult {
+            index: n.index,
+            score: n.distance,
+            metadata: None,
+        })
+        .collect();
     
     Ok(Json(SearchResponse { results }))
 }
@@ -196,6 +215,104 @@ fn simple_hash_embedding(text: &str, dim: usize) -> Vec<f32> {
     result
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Agent-R endpoints
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+struct RecordErrorRequest {
+    category: String,
+    severity: String,
+    operation: String,
+    what: String,
+    why: String,
+    context_tags: Vec<String>,
+    prevention: String,
+}
+
+#[derive(Serialize)]
+struct RecordErrorResponse {
+    id: u64,
+}
+
+fn parse_category(s: &str) -> ErrorCategory {
+    match s {
+        "circular_reasoning" | "CircularReasoning" => ErrorCategory::CircularReasoning,
+        "output_drift" | "OutputDrift" => ErrorCategory::OutputDrift,
+        "fabrication" | "Fabrication" => ErrorCategory::Fabrication,
+        "bad_assumption" | "BadAssumption" => ErrorCategory::BadAssumption,
+        "skipped_validation" | "SkippedValidation" => ErrorCategory::SkippedValidation,
+        "timeout" | "Timeout" => ErrorCategory::Timeout,
+        "state_corruption" | "StateCorruption" => ErrorCategory::StateCorruption,
+        "recurring_pattern" | "RecurringPattern" => ErrorCategory::RecurringPattern,
+        _ => ErrorCategory::Other,
+    }
+}
+
+fn parse_severity(s: &str) -> ErrorSeverity {
+    match s {
+        "critical" | "Critical" => ErrorSeverity::Critical,
+        "error" | "Error" => ErrorSeverity::Error,
+        _ => ErrorSeverity::Warning,
+    }
+}
+
+async fn record_error(
+    State(state): State<AppState>,
+    Json(req): Json<RecordErrorRequest>,
+) -> Result<Json<RecordErrorResponse>, StatusCode> {
+    let mut agent = state.agent_r.lock().await;
+    let tags: Vec<&str> = req.context_tags.iter().map(|s| s.as_str()).collect();
+    let id = agent.record_error(
+        parse_category(&req.category),
+        parse_severity(&req.severity),
+        &req.operation,
+        &req.what,
+        &req.why,
+        &tags,
+        &req.prevention,
+    );
+    Ok(Json(RecordErrorResponse { id }))
+}
+
+#[derive(Deserialize)]
+struct PreflightRequest {
+    operation: String,
+    context_tags: Vec<String>,
+}
+
+async fn preflight_check(
+    State(state): State<AppState>,
+    Json(req): Json<PreflightRequest>,
+) -> Result<Json<crate::agent_r::PreflightResult>, StatusCode> {
+    let mut agent = state.agent_r.lock().await;
+    let tags: Vec<&str> = req.context_tags.iter().map(|s| s.as_str()).collect();
+    let result = agent.preflight(&req.operation, &tags);
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+struct ValidateOutputRequest {
+    operation: String,
+    output: serde_json::Value,
+}
+
+async fn validate_output(
+    State(state): State<AppState>,
+    Json(req): Json<ValidateOutputRequest>,
+) -> Result<Json<crate::agent_r::ValidationResult>, StatusCode> {
+    let mut agent = state.agent_r.lock().await;
+    let result = agent.validate_output(&req.operation, &req.output);
+    Ok(Json(result))
+}
+
+async fn agent_r_stats(
+    State(state): State<AppState>,
+) -> Result<Json<crate::agent_r::AgentRStats>, StatusCode> {
+    let agent = state.agent_r.lock().await;
+    Ok(Json(agent.stats().clone()))
+}
+
 pub async fn run_server(port: u16) -> anyhow::Result<()> {
     let config = M2MConfig::default();
     let store = SplatStore::new(config);
@@ -203,6 +320,8 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         next_id: Arc::new(Mutex::new(0)),
+        agent_r: Arc::new(Mutex::new(AgentR::new())),
+        index_dirty: Arc::new(tokio::sync::Notify::new()),
     };
 
     let app = Router::new()
@@ -210,6 +329,11 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/status", post(status))
         .route("/store", post(store_memory))
         .route("/search", post(search_memories))
+        .route("/rebuild-index", post(rebuild_index))
+        .route("/agent-r/record-error", post(record_error))
+        .route("/agent-r/preflight", post(preflight_check))
+        .route("/agent-r/validate", post(validate_output))
+        .route("/agent-r/stats", get(agent_r_stats))
         .layer(CorsLayer::permissive())
         .with_state(state);
 

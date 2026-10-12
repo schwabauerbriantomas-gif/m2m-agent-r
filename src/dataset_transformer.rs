@@ -805,7 +805,7 @@ mod tests {
             for _ in 0..30 { v.extend_from_slice(&[0.0, 0.0, 1.0, 0.0]); }
             v
         }).unwrap();
-        let (splats, _, _, stats) = transformer.to_splats_leader(&data, 3, 1, 42, None);
+        let (splats, _, _, _stats) = transformer.to_splats_leader(&data, 3, 1, 42, None);
         assert!(splats.len() >= 1);
         assert!(splats.len() <= 10); // auto-threshold shouldn't explode
         let total: usize = splats.iter().map(|s| s.n_vectors).sum();

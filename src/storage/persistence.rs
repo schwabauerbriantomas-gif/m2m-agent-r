@@ -98,6 +98,7 @@ impl M2MPersistence {
     // ---- Vector Storage (file-based, unchanged) ----
 
     pub fn save_vectors(&self, vectors: &Array2<f32>, shard_name: &str) -> std::io::Result<()> {
+        validate_shard_name(shard_name)?;
         let path = self.storage_path.join("data").join("vectors").join(format!("{}.bin", shard_name));
         let mut file = std::fs::File::create(path)?;
         use std::io::Write;
@@ -112,6 +113,7 @@ impl M2MPersistence {
     }
 
     pub fn load_vectors(&self, shard_name: &str) -> std::io::Result<Option<Array2<f32>>> {
+        validate_shard_name(shard_name)?;
         let path = self.storage_path.join("data").join("vectors").join(format!("{}.bin", shard_name));
         if !path.exists() { return Ok(None); }
         let mut file = std::fs::File::open(path)?;
@@ -238,6 +240,16 @@ fn validate_path(storage_path: &str) -> Result<PathBuf, Box<dyn std::error::Erro
         return Err("Path traversal detected in storage_path".into());
     }
     Ok(PathBuf::from(storage_path).canonicalize().unwrap_or_else(|_| PathBuf::from(storage_path)))
+}
+
+fn validate_shard_name(name: &str) -> std::io::Result<()> {
+    if name.contains('/') || name.contains('\\') || name.contains("..") || name.contains('\0') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Invalid shard name: {:?}", name),
+        ));
+    }
+    Ok(())
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {

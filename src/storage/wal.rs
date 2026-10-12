@@ -126,7 +126,10 @@ impl WriteAheadLog {
         let mut inner = self.inner.lock().unwrap();
         // Close current file
         inner.file.flush()?;
-        drop(std::mem::replace(&mut inner.file, BufWriter::new(File::open("/dev/null")?)));
+        // Swap with a dummy file (truncate the real file and rewrite below)
+        let dummy_path = self.path.with_extension("tmp");
+        let dummy_file = File::create(&dummy_path)?;
+        drop(std::mem::replace(&mut inner.file, BufWriter::new(dummy_file)));
 
         // Rewrite with remaining entries
         let file = OpenOptions::new().write(true).truncate(true).open(&self.path)?;
@@ -138,6 +141,10 @@ impl WriteAheadLog {
             writer.write_all(&serialized)?;
         }
         writer.flush()?;
+        drop(writer);
+
+        // Clean up temp file
+        let _ = std::fs::remove_file(&dummy_path);
 
         // Reopen for append
         inner.file = BufWriter::new(OpenOptions::new().append(true).open(&self.path)?);

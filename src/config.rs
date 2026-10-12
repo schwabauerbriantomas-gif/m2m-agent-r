@@ -226,8 +226,8 @@ impl Dtype {
 impl Default for M2MConfig {
     fn default() -> Self {
         Self {
-            // System
-            device: "cpu".to_string(),
+            // System — auto-detect GPU on startup
+            device: detect_device().to_string(),
             dtype: Dtype::Float32,
 
             // Latent Space
@@ -679,7 +679,7 @@ mod tests {
         let config = M2MConfig::default();
         assert_eq!(config.latent_dim, 640);
         assert_eq!(config.knn_k, 64);
-        assert_eq!(config.device, "cpu");
+        assert!(config.device == "cpu" || config.device == "cuda");
         assert!(config.enable_quantization);
         assert!(config.enable_graph);
         assert!(config.enable_semantic_memory);
@@ -907,7 +907,6 @@ mod tests {
 
     #[test]
     fn test_ingest_with_transformer() {
-        use crate::dataset_transformer::{DatasetTransformer, TransformConfig};
         use crate::splats::SplatStore;
         use ndarray::Array2;
 
@@ -1065,8 +1064,7 @@ mod tests {
     #[test]
     fn test_fused_search_uses_hnsw() {
         use crate::splats::SplatStore;
-        use ndarray::{Array1, Array2};
-
+        use ndarray::Array2;
         let mut config = M2MConfig::advanced(None);
         config.device = "cpu".to_string();
         config.enable_cuda = false;

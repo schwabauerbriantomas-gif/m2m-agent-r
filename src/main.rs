@@ -1217,7 +1217,8 @@ fn main() {
             #[cfg(feature = "cuda")]
             let gpu_search: Option<serde_json::Value> = {
                 if let Some(mut gpu_idx) = m2m_vector_search::gpu::cuda_kernel::GpuIndex::new() {
-                    let raw_flat: Vec<f32> = dataset.clone().into_raw_vec();
+                    let (raw_flat, _offset) = dataset.clone().into_raw_vec_and_offset();
+                    let raw_flat: Vec<f32> = raw_flat;
                     eprintln!("[m2m] Phase 4: GPU search on raw {} vectors...", n_vectors);
                     let t_gpu_upload = Instant::now();
                     gpu_idx.upload_dataset(&raw_flat, n_vectors, dim);
