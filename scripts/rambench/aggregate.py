@@ -29,10 +29,10 @@ def main():
 
     by_n = {}
     gens = {}
-    for path in sorted(glob.glob(os.path.join(args.raw_dir, "run_r*_n*.json"))):
+    for path in sorted(glob.glob(os.path.join(args.raw_dir, "run_*_n*.json"))):
         rec = json.load(open(path))
         by_n.setdefault(rec["n"], []).append(rec)
-    for path in sorted(glob.glob(os.path.join(args.raw_dir, "gen_r*_n*.json"))):
+    for path in sorted(glob.glob(os.path.join(args.raw_dir, "gen_*_n*.json"))):
         g = json.load(open(path))
         gens.setdefault(g["n"], []).append(g)
 
@@ -61,8 +61,12 @@ def main():
                 "vals": vals,
                 "mediana": statistics.median(vals),
             }
-        # bytes/incidente observados (delta RSS / registros RESIDENTES, no N)
-        residentes = min(n, 10000)
+        # bytes/incidente observados (delta RSS / registros RESIDENTES, no N).
+        # residentes = min(stats total_errors_recorded, MAX_ERRORS efectivo del binario);
+        # RAMBENCH_MAX_ERRORS la pasa el wrapper cuando el binario relevo el cap.
+        max_eff = int(os.environ.get("RAMBENCH_MAX_ERRORS", "10000"))
+        residentes = min(int(statistics.median(
+            [r["stats_pre_restart"]["total_errors_recorded"] for r in recs])), max_eff)
         agg["bytes_por_incidente_residente"] = round(
             statistics.median([r["rss_delta_loaded_minus_empty_kb"] for r in recs]) * 1024 / residentes, 1
         )
