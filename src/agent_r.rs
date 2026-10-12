@@ -11,7 +11,7 @@
 //! Reference: Agent-R methodology (self-correcting AI with reflective memory)
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 /// Severity of a recorded error.
@@ -216,44 +216,56 @@ impl AgentR {
     }
 
     /// Search error memory for relevant past errors.
+    ///
+    /// Composite score (structured so weights can evolve):
+    ///   score = exact_op(10.0) + shared_tags * 2.0 (normalized by query size)
+    ///         + recency(0..=5.0)
+    ///
+    /// - Operation matching is EXACT. The old bidirectional substring match
+    ///   (`e.operation.contains(operation) || operation.contains(&e.operation)`)
+    ///   made unrelated operations inherit each other's errors — a never-seen
+    ///   operation got blocked by `generate_benchmarks` history (R1 probe).
+    ///   Cross-operation relevance now only comes from shared context tags.
+    /// - Recency is measured against `SystemTime::now()` (was: against the
+    ///   last inserted error, so stale memories scored as fresh) and capped at
+    ///   5.0 so it can never eclipse an exact operation match (10.0).
+    /// - Errors scoring 0.0 (different operation AND no tags in common) are
+    ///   not recalled at all.
     pub fn recall_errors(&self, operation: &str, tags: &[&str]) -> Vec<&ErrorRecord> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        let query_tags: HashSet<&str> = tags.iter().copied().collect();
+
         let mut scored: Vec<(f64, &ErrorRecord)> = self.errors.iter()
             .filter_map(|e| {
                 let mut score = 0.0;
 
-                // Exact operation match
+                // Exact operation match only — substring cross-match removed
                 if e.operation == operation {
                     score += 10.0;
-                } else if e.operation.contains(operation) || operation.contains(&e.operation) {
-                    score += 5.0;
                 }
 
-                // Tag overlap
-                for tag in tags {
-                    if e.context_tags.iter().any(|t| t == tag) {
-                        score += 3.0;
-                    }
+                // Tag overlap: 2.0 per shared tag, normalized by query size so
+                // long queries don't inflate marginally-related errors.
+                if !query_tags.is_empty() {
+                    let shared = e.context_tags.iter()
+                        .filter(|t| query_tags.contains(t.as_str()))
+                        .count();
+                    score += shared as f64 * 2.0 / query_tags.len() as f64;
                 }
 
-                // Recency bonus (more recent = higher score)
-                let age_hours = (self.errors.last().map(|e| e.timestamp).unwrap_or(0.0) - e.timestamp) / 3600.0;
-                score += (24.0 - age_hours.min(24.0)) * 0.5;
-
-                // Recurrence penalty — recurring errors are more important
-                score += e.recurrence as f64 * 2.0;
-
-                // Severity bonus
-                score += match e.severity {
-                    ErrorSeverity::Critical => 5.0,
-                    ErrorSeverity::Error => 3.0,
-                    ErrorSeverity::Warning => 1.0,
-                };
-
-                if score > 0.0 {
-                    Some((score, e))
-                } else {
-                    None
+                // No relation to this query (different op, no shared tags)
+                if score == 0.0 {
+                    return None;
                 }
+
+                // Recency vs SystemTime::now(), linear over 24h, capped at 5.0
+                let age_hours = ((now - e.timestamp) / 3600.0).max(0.0);
+                score += (24.0 - age_hours.min(24.0)) * (5.0 / 24.0);
+
+                Some((score, e))
             })
             .collect();
 
