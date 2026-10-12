@@ -91,19 +91,40 @@ async def post(session_sem, url: str, payload: dict) -> tuple:
         return await loop.run_in_executor(None, do)
 
 
+async def post_chunk(sem, url: str, chunk: list) -> list:
+    """Envía un chunk de payloads; devuelve (status, body) por payload."""
+    loop = asyncio.get_event_loop()
+    tasks = [post(sem, url, p) for p in chunk]
+    return await asyncio.gather(*tasks)
+
+
 async def run(args):
-    payloads = [gen_record(i, args.seed) for i in range(args.n)]
     sem = asyncio.Semaphore(args.concurrency)
     url = args.url.rstrip("/") + "/agent-r/record-error"
-    t0 = time.perf_counter()
-    tasks = [post(sem, url, p) for p in payloads]
-    results = await asyncio.gather(*tasks)
-    elapsed = time.perf_counter() - t0
     codes = {}
-    for status, _ in results:
-        codes[str(status)] = codes.get(str(status), 0) + 1
+    n_ok = 0
+    t0 = time.perf_counter()
+    first_record = None
+    last_record = None
+    CHUNK = 10_000  # materializa 10k payloads por vez (RAM del generador acotada)
+    done = 0
+    while done < args.n:
+        m = min(CHUNK, args.n - done)
+        chunk = [gen_record(done + k, args.seed) for k in range(m)]
+        if first_record is None:
+            first_record = chunk[0]
+        last_record = chunk[-1]
+        results = await post_chunk(sem, url, chunk)
+        for status, _ in results:
+            key = str(status)
+            codes[key] = codes.get(key, 0) + 1
+            if status == 200:
+                n_ok += 1
+        done += m
+    elapsed = time.perf_counter() - t0
     summary = {
         "n": args.n,
+        "ok_200": n_ok,
         "seed": args.seed,
         "concurrency": args.concurrency,
         "url": url,
@@ -123,8 +144,8 @@ async def run(args):
         import os
         os.makedirs(args.out_dir, exist_ok=True)
         manifest = dict(summary)
-        manifest["first_record"] = payloads[0]
-        manifest["last_record"] = payloads[-1]
+        manifest["first_record"] = first_record
+        manifest["last_record"] = last_record
         path = os.path.join(args.out_dir, f"manifest-n{args.n}-seed{args.seed}.json")
         with open(path, "w") as f:
             json.dump(manifest, f, indent=2)
