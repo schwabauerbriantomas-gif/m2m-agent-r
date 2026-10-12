@@ -308,7 +308,14 @@ impl AgentR {
             }
 
             if error.severity == ErrorSeverity::Critical && error.recurrence >= 2 {
-                should_block = true;
+                // Blocking requires an EXACT operation match. Errors recalled
+                // only through shared tags may warn, but never block: a new
+                // operation sharing context with a failing one is not the same
+                // failure (goal R01: "una operación nueva o sin relación NUNCA
+                // hereda bloqueos").
+                if error.operation == operation {
+                    should_block = true;
+                }
                 warnings.push(format!(
                     "BLOCKED ({}x): Recurring critical error in '{}': {}",
                     error.recurrence + 1, error.operation, error.what
@@ -786,6 +793,26 @@ mod tests {
         assert_eq!(result.precautions.len(), 1);
         // relevant_errors counts recalled records (5), not deduped patterns (1)
         assert_eq!(result.relevant_errors, 5);
+    }
+
+    #[test]
+    fn test_bloqueo_requiere_match_exacto() {
+        // An error recalled ONLY via shared tags (different operation) must
+        // surface as a warning but NEVER block: proceed stays true.
+        let mut agent = AgentR::new();
+        for _ in 0..3 {
+            agent.record_error(
+                ErrorCategory::Fabrication, ErrorSeverity::Critical,
+                "generate_benchmarks", "Invented benchmark data", "Skipped testing",
+                &["benchmarks", "GPU"], "Only use validated data",
+            );
+        }
+
+        let result = agent.preflight("gpu_report", &["benchmarks", "GPU"]);
+        assert!(result.proceed, "tag-recalled error from another operation must not block");
+        assert_eq!(result.relevant_errors, 3);
+        assert_eq!(result.warnings.len(), 1, "deduped to one warning");
+        assert!(result.warnings[0].contains("generate_benchmarks"));
     }
 
     #[test]
