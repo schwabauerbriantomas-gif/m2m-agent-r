@@ -49,7 +49,22 @@ pub enum ErrorCategory {
     Other,
 }
 
+/// Interned string id (index into `AgentR::string_pool`).
+/// 4 B inline en vez de un `String` de 24 B + heap: las ~15 operaciones y ~20
+/// tags del workload real se deduplican en un pool mínimo (OPT-O3).
+pub type InternedId = u32;
+
 /// A structured error record with full context for learning.
+///
+/// Layout optimizado (OPT-O3, medido: 693 -> ~460 B/registro a 100k):
+/// - `operation` y `context_tags` viven en el string pool del `AgentR` (dedup):
+///   `String` 24 B -> `u32` 4 B, y `Vec<String>` (24 B ptr + 96 B cap-4 buffer
+///   + 2.49 × 32 B bins de tags) -> `Vec<u32>` (~24 B buffer).
+/// - `what`/`why`/`prevention` son `Box<str>`: dato único por registro, la
+///   capacidad extra de `String` no aporta nada y cuesta 8 B inline por campo.
+/// - Los payloads siguen en heap (DEDIUM: puntero inline, dato afuera); con el
+///   Vec contenedor append-only los punteros heap son estables (verificado en
+///   examples/falsify_layout.rs).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ErrorRecord {
     /// Unique ID for this error
@@ -60,16 +75,16 @@ pub struct ErrorRecord {
     pub category: ErrorCategory,
     /// How bad was it
     pub severity: ErrorSeverity,
-    /// What operation was being performed
-    pub operation: String,
+    /// What operation was being performed (interned en el pool del AgentR)
+    pub operation: InternedId,
     /// What went wrong (concise)
-    pub what: String,
+    pub what: Box<str>,
     /// Why it went wrong (root cause analysis)
-    pub why: String,
-    /// What context led to the error
-    pub context_tags: Vec<String>,
+    pub why: Box<str>,
+    /// What context led to the error (tags internadas en el pool del AgentR)
+    pub context_tags: Vec<InternedId>,
     /// How to prevent it next time
-    pub prevention: String,
+    pub prevention: Box<str>,
     /// Whether this error has been seen before (recurrence count)
     pub recurrence: u32,
     /// Associated error pattern ID (if this matches a known pattern)
@@ -128,11 +143,17 @@ const REPETITION_THRESHOLD: usize = 3;
 pub struct AgentR {
     errors: Vec<ErrorRecord>,
     next_id: u64,
-    /// Índice de recurrencia: (category, operation) -> ids de errores con esa
-    /// clave, en orden de inserción. Elimina los 2 scans O(n) por POST de
+    /// String pool: ids de operaciones/tags internadas (dedup global).
+    /// Workload real: ~15 ops + ~20 tags => pool acotado y mínimo.
+    string_pool: Vec<Box<str>>,
+    /// Índice inverso del pool (string -> id) para internar en O(1).
+    string_pool_index: HashMap<Box<str>, InternedId>,
+    /// Índice de recurrencia: (category, operation-id) -> ids de errores con
+    /// esa clave, en orden de inserción. Elimina los 2 scans O(n) por POST de
     /// record_error (recurrence + pattern_id): ambos se derivan del bucket.
+    /// Clave con InternedId (OPT-O3): cero alloc de String por POST.
     /// Invariante: todo id del bucket sigue vivo en `errors` (eviction lo purga).
-    recurrence_index: HashMap<(ErrorCategory, String), std::collections::VecDeque<u64>>,
+    recurrence_index: HashMap<(ErrorCategory, InternedId), std::collections::VecDeque<u64>>,
     /// Reasoning chain tracker (operation hashes for loop detection)
     reasoning_chain: Vec<u64>,
     /// Reasoning chain metadata (operation name for reporting)
@@ -147,12 +168,32 @@ impl AgentR {
         Self {
             errors: Vec::new(),
             next_id: 1,
+            string_pool: Vec::new(),
+            string_pool_index: HashMap::new(),
             recurrence_index: HashMap::new(),
             reasoning_chain: Vec::new(),
             reasoning_labels: Vec::new(),
             validators: Vec::new(),
             stats: AgentRStats::default(),
         }
+    }
+
+    /// Intern a string in the pool, returning its canonical id.
+    /// Strings idénticas comparten id => comparar ids equivale a comparar strings.
+    fn intern(&mut self, s: &str) -> InternedId {
+        if let Some(&id) = self.string_pool_index.get(s) {
+            return id;
+        }
+        let id = self.string_pool.len() as InternedId;
+        let boxed: Box<str> = s.into();
+        self.string_pool.push(boxed.clone());
+        self.string_pool_index.insert(boxed, id);
+        id
+    }
+
+    /// Resolve an interned id back to its string (operación o tag).
+    pub fn resolve(&self, id: InternedId) -> &str {
+        &self.string_pool[id as usize]
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -179,12 +220,15 @@ impl AgentR {
             .unwrap_or_default()
             .as_secs_f64();
 
-        // Check for recurrence — same category + operation.
-        // O(1) amortizado vía índice (antes: 2 scans O(n) del Vec por POST).
-        // recurrence = tamaño del bucket ANTES de insertar (equivale al count()
-        // del scan original); pattern_id = id máximo previo de la clave = back()
-        // del bucket (los ids son monótonos). Después entra el id nuevo.
-        let key = (category, operation.to_string());
+        // OPT-O3: internar ANTES de calcular recurrencia.
+        // OPT-O1: recurrence/pattern_id O(1) vía índice (clave internada => sin
+        // alloc). recurrence = bucket.len() pre-insert (equivale al count() del
+        // scan original); pattern_id = back() del bucket (ids monótonos => max).
+        let op_id = self.intern(operation);
+        let tag_ids: Vec<InternedId> =
+            context_tags.iter().map(|t| self.intern(t)).collect();
+
+        let key = (category, op_id);
         let bucket = self.recurrence_index.entry(key).or_default();
         let pattern_id = bucket.back().copied();
         let recurrence = bucket.len() as u32;
@@ -195,11 +239,11 @@ impl AgentR {
             timestamp: now,
             category,
             severity,
-            operation: operation.to_string(),
-            what: what.to_string(),
-            why: why.to_string(),
-            context_tags: context_tags.iter().map(|s| s.to_string()).collect(),
-            prevention: prevention.to_string(),
+            operation: op_id,
+            what: what.into(),
+            why: why.into(),
+            context_tags: tag_ids,
+            prevention: prevention.into(),
             recurrence,
             pattern_id,
         };
@@ -242,29 +286,37 @@ impl AgentR {
         const TOP: usize = 20;
         let last_ts = self.errors.last().map(|e| e.timestamp).unwrap_or(0.0);
 
-        // Min-heap de los TOP mejores. Clave: (score_bits, Reverse(idx)).
-        // - score como bits => Ord total en f64 (scores finitos >= 0).
-        // - Reverse(idx): entre scores iguales el "peor" es el de índice MAYOR
-        //   (el sort estable del código original conserva índice menor), y un
-        //   candidato con score empatado NUNCA desplaza a un residente =>
-        //   salida idéntica a `sort_by` estable + take(20) en todos los casos,
-        //   incluidos empates que cruzan el corte del top-20.
+        // OPT-O3: la operación de la query puede no estar internada (nunca
+        // registrada) => si no está en el pool, no hay match exacto posible.
+        // Los matches parciales (contains) sí requieren el string: se resuelven
+        // via el pool. Lookups del pool sin &mut: índice read-only.
+        let exact_op = self.string_pool_index.get(operation).copied();
+
+        // OPT (opt/opt_recall): Min-heap de los TOP mejores. Clave:
+        // (score_bits, Reverse(idx)). score como bits => Ord total en f64
+        // (scores finitos >= 0). Reverse(idx): entre scores iguales el "peor"
+        // es el de índice MAYOR (el sort estable del código original conserva
+        // índice menor), y un candidato con score empatado NUNCA desplaza a un
+        // residente => salida idéntica a `sort_by` estable + take(20).
         let mut heap: BinaryHeap<Reverse<(u64, Reverse<usize>)>> = BinaryHeap::with_capacity(TOP + 1);
 
         for (idx, e) in self.errors.iter().enumerate() {
             let mut score = 0.0;
+            let e_op = self.resolve(e.operation);
 
-            // Exact operation match
-            if e.operation == operation {
+            // Exact operation match (id contra id: equivalente a comparar strings)
+            if Some(e.operation) == exact_op {
                 score += 10.0;
-            } else if e.operation.contains(operation) || operation.contains(&e.operation) {
+            } else if e_op.contains(operation) || operation.contains(e_op) {
                 score += 5.0;
             }
 
-            // Tag overlap
+            // Tag overlap (ids internados contra ids internados)
             for tag in tags {
-                if e.context_tags.iter().any(|t| t == tag) {
-                    score += 3.0;
+                if let Some(&tid) = self.string_pool_index.get(*tag) {
+                    if e.context_tags.iter().any(|t| *t == tid) {
+                        score += 3.0;
+                    }
                 }
             }
 
@@ -323,17 +375,17 @@ impl AgentR {
                 should_block = true;
                 warnings.push(format!(
                     "BLOCKED: Recurring critical error in '{}': {}",
-                    error.operation, error.what
+                    self.resolve(error.operation), error.what
                 ));
             } else if error.severity == ErrorSeverity::Critical {
                 warnings.push(format!(
                     "WARNING: Past critical error in '{}': {}",
-                    error.operation, error.what
+                    self.resolve(error.operation), error.what
                 ));
             }
 
             if !error.prevention.is_empty() {
-                precautions.push(format!("[{}] {}", error.operation, error.prevention));
+                precautions.push(format!("[{}] {}", self.resolve(error.operation), error.prevention));
             }
         }
 
@@ -600,7 +652,7 @@ impl AgentR {
                     issue_type: ErrorCategory::RecurringPattern,
                     description: format!(
                         "Past critical error in '{}': {} — verify output is correct",
-                        error.operation, error.what
+                        self.resolve(error.operation), error.what
                     ),
                     position: 0,
                     confidence: 0.70,
@@ -655,14 +707,18 @@ impl AgentR {
     }
 
     /// Get the most common error patterns.
-    pub fn top_patterns(&self, limit: usize) -> Vec<(&str, usize)> {
-        let mut counts: HashMap<&str, usize> = HashMap::new();
+    pub fn top_patterns(&mut self, limit: usize) -> Vec<(&str, usize)> {
+        // OPT-O3: agrupa por id internado (u32) en vez de por string; resuelve
+        // el string sólo para los `limit` ganadores.
+        let mut counts: HashMap<InternedId, usize> = HashMap::new();
         for e in &self.errors {
-            *counts.entry(&e.operation).or_insert(0) += 1;
+            *counts.entry(e.operation).or_insert(0) += 1;
         }
         let mut sorted: Vec<_> = counts.into_iter().collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
-        sorted.into_iter().take(limit).collect()
+        sorted.into_iter().take(limit)
+            .map(|(id, n)| (self.resolve(id), n))
+            .collect()
     }
 
     /// Clear reasoning chain without recording errors.
@@ -672,24 +728,88 @@ impl AgentR {
     }
 
     /// Serialize error memory for persistence.
+    /// OPT-O3: serializa strings resueltas (contrato JSON estable: los
+    /// consumidores ven operation/context_tags como strings, no ids).
     pub fn serialize_errors(&self) -> Result<String, serde_json::Error> {
-        serde_json::to_string(&self.errors)
+        #[derive(Serialize)]
+        struct RecordJson<'a> {
+            id: u64,
+            timestamp: f64,
+            category: &'a ErrorCategory,
+            severity: &'a ErrorSeverity,
+            operation: &'a str,
+            what: &'a str,
+            why: &'a str,
+            context_tags: Vec<&'a str>,
+            prevention: &'a str,
+            recurrence: u32,
+            pattern_id: Option<u64>,
+        }
+        let resolved: Vec<RecordJson> = self.errors.iter()
+            .map(|e| RecordJson {
+                id: e.id,
+                timestamp: e.timestamp,
+                category: &e.category,
+                severity: &e.severity,
+                operation: self.resolve(e.operation),
+                what: &e.what,
+                why: &e.why,
+                context_tags: e.context_tags.iter()
+                    .map(|t| self.resolve(*t))
+                    .collect(),
+                prevention: &e.prevention,
+                recurrence: e.recurrence,
+                pattern_id: e.pattern_id,
+            })
+            .collect();
+        serde_json::to_string(&resolved)
     }
 
     /// Load error memory from persistence.
+    /// OPT-O3: deserializa strings y los reinterna (el pool se reconstruye).
     pub fn load_errors(&mut self, json: &str) -> Result<(), serde_json::Error> {
-        let loaded: Vec<ErrorRecord> = serde_json::from_str(json)?;
-        // Reconstruir el índice de recurrencia desde los registros cargados
-        // (los registros vienen en orden de id creciente => append al bucket).
-        let mut index: HashMap<(ErrorCategory, String), std::collections::VecDeque<u64>> = HashMap::new();
-        for e in &loaded {
+        #[derive(Deserialize)]
+        struct RecordJson {
+            id: u64,
+            timestamp: f64,
+            category: ErrorCategory,
+            severity: ErrorSeverity,
+            operation: String,
+            what: String,
+            why: String,
+            context_tags: Vec<String>,
+            prevention: String,
+            recurrence: u32,
+            pattern_id: Option<u64>,
+        }
+        let loaded: Vec<RecordJson> = serde_json::from_str(json)?;
+        self.errors = loaded.into_iter()
+            .map(|r| ErrorRecord {
+                id: r.id,
+                timestamp: r.timestamp,
+                category: r.category,
+                severity: r.severity,
+                operation: self.intern(&r.operation),
+                what: r.what.into_boxed_str(),
+                why: r.why.into_boxed_str(),
+                context_tags: r.context_tags.iter()
+                    .map(|t| self.intern(t))
+                    .collect(),
+                prevention: r.prevention.into_boxed_str(),
+                recurrence: r.recurrence,
+                pattern_id: r.pattern_id,
+            })
+            .collect();
+        // OPT-O1: reconstruir el índice de recurrencia desde los registros
+        // cargados (orden de id creciente => append al bucket).
+        let mut index: HashMap<(ErrorCategory, InternedId), std::collections::VecDeque<u64>> = HashMap::new();
+        for e in &self.errors {
             index
-                .entry((e.category, e.operation.clone()))
+                .entry((e.category, e.operation))
                 .or_default()
                 .push_back(e.id);
         }
         self.recurrence_index = index;
-        self.errors = loaded;
         if let Some(max_id) = self.errors.iter().map(|e| e.id).max() {
             self.next_id = max_id + 1;
         }
@@ -743,14 +863,16 @@ mod tests {
         }
 
         // Referencia: replicar el código original (Vec + sort estable + take 20).
+        // (scorer adaptado al layout internado: compara strings via resolve)
         let ref_top: Vec<(f64, u64)> = {
             let last_ts = agent.errors.last().map(|e| e.timestamp).unwrap_or(0.0);
             let mut scored: Vec<(f64, usize)> = agent.errors.iter().enumerate()
                 .map(|(idx, e)| {
                     let mut s = 0.0;
-                    if e.operation == "distill_lessons" { s += 10.0; }
-                    else if e.operation.contains("distill_lessons") || "distill_lessons".contains(&e.operation) { s += 5.0; }
-                    for t in ["gpu", "ci"] { if e.context_tags.iter().any(|x| x == t) { s += 3.0; } }
+                    let e_op = agent.resolve(e.operation);
+                    if e_op == "distill_lessons" { s += 10.0; }
+                    else if e_op.contains("distill_lessons") || "distill_lessons".contains(e_op) { s += 5.0; }
+                    for t in ["gpu", "ci"] { if e.context_tags.iter().any(|x| agent.resolve(*x) == t) { s += 3.0; } }
                     let age_h = (last_ts - e.timestamp) / 3600.0;
                     s += (24.0 - age_h.min(24.0)) * 0.5;
                     s += e.recurrence as f64 * 2.0;
@@ -764,7 +886,7 @@ mod tests {
         };
 
         let got: Vec<(f64, u64)> = agent.recall_errors("distill_lessons", &["gpu", "ci"])
-            .into_iter().map(|e| (recurrence_only_score(e, "distill_lessons", &["gpu", "ci"], agent.errors.last().map(|x| x.timestamp).unwrap_or(0.0)), e.id))
+            .into_iter().map(|e| (recurrence_only_score(&agent, e, "distill_lessons", &["gpu", "ci"], agent.errors.last().map(|x| x.timestamp).unwrap_or(0.0)), e.id))
             .collect();
         let got_ids: Vec<u64> = got.iter().map(|(_, id)| *id).collect();
         let ref_ids: Vec<u64> = ref_top.iter().map(|(_, id)| *id).collect();
@@ -772,12 +894,13 @@ mod tests {
     }
 
     /// Recalcula el score de un registro para verificar paridad de scores
-    /// (helper del test de paridad).
-    fn recurrence_only_score(e: &ErrorRecord, operation: &str, tags: &[&str], last_ts: f64) -> f64 {
+    /// (helper del test de paridad). Layout internado: resuelve ids via pool.
+    fn recurrence_only_score(agent: &AgentR, e: &ErrorRecord, operation: &str, tags: &[&str], last_ts: f64) -> f64 {
         let mut s = 0.0;
-        if e.operation == operation { s += 10.0; }
-        else if e.operation.contains(operation) || operation.contains(&e.operation) { s += 5.0; }
-        for t in tags { if e.context_tags.iter().any(|x| x == t) { s += 3.0; } }
+        let e_op = agent.resolve(e.operation);
+        if e_op == operation { s += 10.0; }
+        else if e_op.contains(operation) || operation.contains(e_op) { s += 5.0; }
+        for t in tags { if e.context_tags.iter().any(|x| agent.resolve(*x) == *t) { s += 3.0; } }
         let age_h = (last_ts - e.timestamp) / 3600.0;
         s += (24.0 - age_h.min(24.0)) * 0.5;
         s += e.recurrence as f64 * 2.0;
@@ -1013,8 +1136,85 @@ mod tests {
         for i in 0..5 {
             agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "cap_op", "w", "y", &[], &format!("p{i}"));
         }
-        let bucket = agent.recurrence_index.get(&(ErrorCategory::Other, "cap_op".to_string())).unwrap();
+        let op_id = agent.string_pool_index.get("cap_op").copied().unwrap();
+        let bucket = agent.recurrence_index.get(&(ErrorCategory::Other, op_id)).unwrap();
         assert_eq!(bucket.len(), 5);
         assert_eq!(*bucket.back().unwrap(), 5);
+    }
+
+    // ═══ OPT-O3: regresión del layout internado ═══
+
+    #[test]
+    fn test_intern_dedup_same_operation() {
+        // Dos registros con la misma operación comparten id (dedup del pool).
+        let mut agent = AgentR::new();
+        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "op_x", "w", "y", &["t"], "p");
+        agent.record_error(ErrorCategory::Other, ErrorSeverity::Error, "op_x", "w2", "y2", &["t"], "p2");
+        let ids: Vec<_> = agent.errors().iter().map(|e| e.operation).collect();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(ids[0], ids[1], "misma operación => mismo id internado");
+        assert_eq!(agent.resolve(ids[0]), "op_x");
+    }
+
+    #[test]
+    fn test_recall_exact_and_partial_match_interned() {
+        // Exact match (+10) y partial contains (+5) siguen funcionando con ids.
+        let mut agent = AgentR::new();
+        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "rebuild_hnsw_index", "w", "y", &[], "p");
+        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "hnsw", "w", "y", &[], "p");
+        // exact: score 10+recency+severity; partial: 5+... => ambos > 0
+        let found = agent.recall_errors("rebuild_hnsw_index", &[]);
+        assert_eq!(found.len(), 2, "exact + contains deben ambos puntuar");
+        // op nunca registrada pero substring de una existente (contains inverso)
+        let found2 = agent.recall_errors("hnsw", &[]);
+        assert_eq!(found2.len(), 2);
+    }
+
+    #[test]
+    fn test_recall_unknown_operation_no_exact_match() {
+        // Operación jamás internada: no puede haber exact match falso. El bonus
+        // de recencia (+12, comportamiento preexistente del baseline) puntúa
+        // TODOS los registros recientes => el assertion correcto es que ningún
+        // resultado matchee exactamente la op desconocida.
+        let mut agent = AgentR::new();
+        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "zzz_totally_unrelated", "w", "y", &[], "p");
+        let found = agent.recall_errors("qqq_never_seen", &[]);
+        assert!(found.iter().all(|e| agent.resolve(e.operation) != "qqq_never_seen"),
+            "op no internada jamás exact-matchea");
+    }
+
+    #[test]
+    fn test_tag_overlap_interned() {
+        let mut agent = AgentR::new();
+        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "op", "w", "y", &["gpu", "ci"], "p");
+        let found = agent.recall_errors("different_op", &["gpu"]);
+        assert_eq!(found.len(), 1, "tag overlap debe puntuar aunque la op no coincida");
+    }
+
+    #[test]
+    fn test_serialize_contract_strings_not_ids() {
+        // Contrato JSON estable: operation/context_tags serializan como strings.
+        let mut agent = AgentR::new();
+        agent.record_error(ErrorCategory::Fabrication, ErrorSeverity::Critical, "gen_bench", "w", "y", &["bench"], "p");
+        let json = agent.serialize_errors().unwrap();
+        assert!(json.contains("\"operation\":\"gen_bench\""), "operation debe ser string en JSON: {json}");
+        assert!(json.contains("\"context_tags\":[\"bench\"]"), "tags deben ser strings en JSON: {json}");
+        assert!(!json.contains("\"operation\":0"), "operation no debe serializar como id numérico");
+
+        // Roundtrip preserva el comportamiento de recall.
+        let mut agent2 = AgentR::new();
+        agent2.load_errors(&json).unwrap();
+        let found = agent2.recall_errors("gen_bench", &["bench"]);
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn test_top_patterns_interned() {
+        let mut agent = AgentR::new();
+        for _ in 0..3 { agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "op_a", "w", "y", &[], "p"); }
+        for _ in 0..1 { agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "op_b", "w", "y", &[], "p"); }
+        let top = agent.top_patterns(2);
+        assert_eq!(top[0], ("op_a", 3));
+        assert_eq!(top[1], ("op_b", 1));
     }
 }
