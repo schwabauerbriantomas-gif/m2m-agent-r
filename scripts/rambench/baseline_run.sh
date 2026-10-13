@@ -27,7 +27,11 @@ free_port() {
 # start_server <time_log> => deja WRAP (pid del /usr/bin/time) y SERVER_PID (child)
 start_server() {
   free_port
-  /usr/bin/time -v -o "$1" "$BIN" serve --port "$PORT" &
+  # OPT-O4: el harness mide el pipeline en RAM => server EFÍMERO
+  # (AGENT_R_STATE_PATH vacío). El write-through persistente serializa el
+  # estado completo por POST (O(n) I/O por write); se mide aparte como
+  # datapoint propio, nunca dentro del bench de ingesta/recall.
+  AGENT_R_STATE_PATH= /usr/bin/time -v -o "$1" "$BIN" serve --port "$PORT" &
   WRAP=$!
   SERVER_PID=""
   for i in $(seq 1 100); do

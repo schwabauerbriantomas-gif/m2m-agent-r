@@ -33,6 +33,9 @@ pub struct AppState {
     pub next_id: Arc<Mutex<usize>>,
     pub agent_r: Arc<Mutex<AgentR>>,
     pub index_dirty: Arc<tokio::sync::Notify>,
+    /// Coordinación multi-agente (OPT-SWARM): cola con claim atómico +
+    /// lecciones compartidas via agent_r.
+    pub swarm: std::sync::Arc<crate::agent_swarm::AgentSwarm>,
 }
 
 #[derive(Deserialize)]
@@ -230,6 +233,358 @@ struct RecordErrorRequest {
     prevention: String,
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// Agent-Swarm: coordinación multi-agente (OPT-SWARM)
+// ══════════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+struct SwarmRegisterRequest {
+    name: String,
+    #[serde(default)]
+    capabilities: Vec<String>,
+    /// Rol inicial (bootstrap de confianza). Para cambios en caliente,
+    /// /agent-swarm/roles (sólo Coordinator).
+    #[serde(default)]
+    role: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SwarmRegisterResponse {
+    name: String,
+    ok: bool,
+    role: Option<crate::agent_swarm::SwarmRole>,
+}
+
+async fn swarm_register(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmRegisterRequest>,
+) -> Json<SwarmRegisterResponse> {
+    let caps: Vec<&str> = req.capabilities.iter().map(|s| s.as_str()).collect();
+    let role = req.role.as_deref().and_then(crate::agent_swarm::SwarmRole::from_str);
+    let name = state.swarm.register_agent(&req.name, &caps, role);
+    let agents_role = state
+        .swarm
+        .live_agents()
+        .iter()
+        .find(|a| a.name == name)
+        .map(|a| a.role);
+    Json(SwarmRegisterResponse { name, ok: true, role: agents_role })
+}
+
+#[derive(Deserialize)]
+struct SwarmHeartbeatRequest {
+    name: String,
+}
+
+#[derive(Serialize)]
+struct SwarmHeartbeatResponse {
+    ok: bool,
+}
+
+async fn swarm_heartbeat(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmHeartbeatRequest>,
+) -> Json<SwarmHeartbeatResponse> {
+    Json(SwarmHeartbeatResponse { ok: state.swarm.heartbeat(&req.name) })
+}
+
+#[derive(Deserialize)]
+struct SwarmSubmitTaskRequest {
+    operation: String,
+    description: String,
+    #[serde(default)]
+    depends_on: Vec<u64>,
+    #[serde(default)]
+    preferred_agent: Option<String>,
+}
+
+#[derive(Serialize)]
+struct SwarmSubmitTaskResponse {
+    task_id: u64,
+}
+
+async fn swarm_submit_task(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmSubmitTaskRequest>,
+) -> Json<SwarmSubmitTaskResponse> {
+    let task_id = state.swarm.submit_task(
+        &req.operation,
+        &req.description,
+        req.depends_on,
+        req.preferred_agent.as_deref(),
+    );
+    Json(SwarmSubmitTaskResponse { task_id })
+}
+
+#[derive(Deserialize)]
+struct SwarmClaimRequest {
+    task_id: u64,
+    agent: String,
+}
+
+#[derive(Serialize)]
+struct SwarmClaimResponse {
+    result: crate::agent_swarm::ClaimResult,
+}
+
+async fn swarm_claim_task(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmClaimRequest>,
+) -> Json<SwarmClaimResponse> {
+    let result = state.swarm.claim_task(req.task_id, &req.agent);
+    Json(SwarmClaimResponse { result })
+}
+
+#[derive(Deserialize)]
+struct SwarmCompleteRequest {
+    task_id: u64,
+    agent: String,
+    result: String,
+}
+
+#[derive(Serialize)]
+struct SwarmCompleteResponse {
+    ok: bool,
+}
+
+async fn swarm_complete_task(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmCompleteRequest>,
+) -> Json<SwarmCompleteResponse> {
+    let mut agent_r = state.agent_r.lock().await;
+    Json(SwarmCompleteResponse {
+        ok: state.swarm.complete_task(&mut agent_r, req.task_id, &req.agent, &req.result),
+    })
+}
+
+#[derive(Deserialize)]
+struct SwarmFailRequest {
+    task_id: u64,
+    agent: String,
+    reason: String,
+}
+
+#[derive(Serialize)]
+struct SwarmFailResponse {
+    ok: bool,
+}
+
+async fn swarm_fail_task(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmFailRequest>,
+) -> Json<SwarmFailResponse> {
+    let mut agent_r = state.agent_r.lock().await;
+    Json(SwarmFailResponse {
+        ok: state.swarm.fail_task(&mut agent_r, req.task_id, &req.agent, &req.reason),
+    })
+}
+
+#[derive(Deserialize)]
+struct SwarmResultQuery {
+    task_id: u64,
+}
+
+async fn swarm_task_result(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<SwarmResultQuery>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "result": state.swarm.task_result(q.task_id) }))
+}
+
+#[derive(Deserialize)]
+struct SwarmBarrierRequest {
+    participants: usize,
+}
+
+#[derive(Serialize)]
+struct SwarmBarrierResponse {
+    barrier_id: u64,
+}
+
+async fn swarm_barrier(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmBarrierRequest>,
+) -> Json<SwarmBarrierResponse> {
+    let barrier_id = state.swarm.create_barrier(req.participants.max(1));
+    Json(SwarmBarrierResponse { barrier_id })
+}
+
+#[derive(Deserialize)]
+struct SwarmBarrierArriveRequest {
+    barrier_id: u64,
+}
+
+#[derive(Serialize)]
+struct SwarmBarrierArriveResponse {
+    /// true cuando TODOS los participantes llegaron (barrera abierta).
+    open: Option<bool>,
+}
+
+async fn swarm_barrier_arrive(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmBarrierArriveRequest>,
+) -> Json<SwarmBarrierArriveResponse> {
+    Json(SwarmBarrierArriveResponse { open: state.swarm.barrier_arrive(req.barrier_id) })
+}
+
+#[derive(Deserialize)]
+struct SwarmPreflightRequest {
+    operation: String,
+    #[serde(default)]
+    context_tags: Vec<String>,
+}
+
+async fn swarm_preflight(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmPreflightRequest>,
+) -> Json<serde_json::Value> {
+    let mut agent_r = state.agent_r.lock().await;
+    let tags: Vec<&str> = req.context_tags.iter().map(|s| s.as_str()).collect();
+    Json(state.swarm.preflight_shared(&mut agent_r, &req.operation, &tags))
+}
+
+async fn swarm_status(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let agent_r = state.agent_r.lock().await;
+    Json(state.swarm.status(&agent_r))
+}
+
+// ── Acuerdo con roles: propuestas + consenso (API) ─────────────────────
+
+#[derive(Deserialize)]
+struct SwarmSetRoleRequest {
+    coordinator: String,
+    agent: String,
+    role: String,
+}
+
+#[derive(Serialize)]
+struct SwarmSetRoleResponse {
+    ok: bool,
+    role: Option<crate::agent_swarm::SwarmRole>,
+}
+
+async fn swarm_set_role(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmSetRoleRequest>,
+) -> Json<SwarmSetRoleResponse> {
+    let role = crate::agent_swarm::SwarmRole::from_str(&req.role)
+        .map(|r| state.swarm.set_role(&req.coordinator, &req.agent, r))
+        .unwrap_or(None);
+    Json(SwarmSetRoleResponse { ok: role.is_some(), role })
+}
+
+#[derive(Deserialize)]
+struct SwarmSubmitProposalRequest {
+    proposer: String,
+    title: String,
+    body: String,
+    operation: String,
+    #[serde(default)]
+    min_votes: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct SwarmSubmitProposalResponse {
+    ok: bool,
+    proposal_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn swarm_submit_proposal(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmSubmitProposalRequest>,
+) -> Json<SwarmSubmitProposalResponse> {
+    match state.swarm.submit_proposal(
+        &req.proposer, &req.title, &req.body, &req.operation, req.min_votes,
+    ) {
+        Ok(id) => Json(SwarmSubmitProposalResponse { ok: true, proposal_id: Some(id), error: None }),
+        Err(e) => Json(SwarmSubmitProposalResponse { ok: false, proposal_id: None, error: Some(e) }),
+    }
+}
+
+#[derive(Deserialize)]
+struct SwarmVoteRequest {
+    proposal_id: u64,
+    voter: String,
+    /// ACCEPT | REJECT
+    decision: String,
+    reason: String,
+}
+
+#[derive(Serialize)]
+struct SwarmVoteResponse {
+    result: crate::agent_swarm::VoteResult,
+}
+
+async fn swarm_vote(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmVoteRequest>,
+) -> Json<SwarmVoteResponse> {
+    let result = state
+        .swarm
+        .vote_proposal(req.proposal_id, &req.voter, req.decision.eq_ignore_ascii_case("accept"), &req.reason);
+    Json(SwarmVoteResponse { result })
+}
+
+#[derive(Deserialize)]
+struct SwarmMaterializeRequest {
+    proposal_id: u64,
+}
+
+#[derive(Serialize)]
+struct SwarmMaterializeResponse {
+    ok: bool,
+    task_id: u64,
+    state: Option<crate::agent_swarm::ProposalState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+async fn swarm_materialize(
+    State(state): State<AppState>,
+    Json(req): Json<SwarmMaterializeRequest>,
+) -> Json<SwarmMaterializeResponse> {
+    match state.swarm.materialize_proposal(req.proposal_id) {
+        Ok((tid, st)) => Json(SwarmMaterializeResponse {
+            ok: tid != 0,
+            task_id: tid,
+            state: Some(st),
+            error: None,
+        }),
+        Err(e) => Json(SwarmMaterializeResponse {
+            ok: false,
+            task_id: 0,
+            state: None,
+            error: Some(e),
+        }),
+    }
+}
+
+#[derive(Deserialize)]
+struct SwarmProposalQuery {
+    proposal_id: u64,
+}
+
+async fn swarm_proposal_status(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<SwarmProposalQuery>,
+) -> Json<serde_json::Value> {
+    Json(state
+        .swarm
+        .proposal_status(q.proposal_id)
+        .unwrap_or(serde_json::json!({"error": "propuesta inexistente"})))
+}
+
+#[derive(Serialize)]
+struct SwarmCloseStalledResponse {
+    closed: usize,
+}
+
+async fn swarm_close_stalled(State(state): State<AppState>) -> Json<SwarmCloseStalledResponse> {
+    Json(SwarmCloseStalledResponse { closed: state.swarm.close_stalled() })
+}
+
 #[derive(Serialize)]
 struct RecordErrorResponse {
     id: u64,
@@ -332,12 +687,14 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         Ok(p) => AgentR::with_state_path(std::path::PathBuf::from(p)),
         Err(_) => AgentR::with_state_path(std::path::PathBuf::from(AgentR::DEFAULT_STATE_PATH)),
     };
+    let agent_r_arc = Arc::new(Mutex::new(agent_r));
 
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         next_id: Arc::new(Mutex::new(0)),
-        agent_r: Arc::new(Mutex::new(agent_r)),
+        agent_r: agent_r_arc.clone(),
         index_dirty: Arc::new(tokio::sync::Notify::new()),
+        swarm: std::sync::Arc::new(crate::agent_swarm::AgentSwarm::new()),
     };
 
     let app = Router::new()
@@ -350,6 +707,23 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-r/preflight", post(preflight_check))
         .route("/agent-r/validate", post(validate_output))
         .route("/agent-r/stats", get(agent_r_stats))
+        .route("/agent-swarm/register", post(swarm_register))
+        .route("/agent-swarm/heartbeat", post(swarm_heartbeat))
+        .route("/agent-swarm/tasks", post(swarm_submit_task))
+        .route("/agent-swarm/tasks/claim", post(swarm_claim_task))
+        .route("/agent-swarm/tasks/complete", post(swarm_complete_task))
+        .route("/agent-swarm/tasks/fail", post(swarm_fail_task))
+        .route("/agent-swarm/tasks/result", get(swarm_task_result))
+        .route("/agent-swarm/barrier", post(swarm_barrier))
+        .route("/agent-swarm/barrier/arrive", post(swarm_barrier_arrive))
+        .route("/agent-swarm/preflight", post(swarm_preflight))
+        .route("/agent-swarm/status", get(swarm_status))
+        .route("/agent-swarm/roles", post(swarm_set_role))
+        .route("/agent-swarm/proposals", post(swarm_submit_proposal))
+        .route("/agent-swarm/proposals/vote", post(swarm_vote))
+        .route("/agent-swarm/proposals/materialize", post(swarm_materialize))
+        .route("/agent-swarm/proposals/status", get(swarm_proposal_status))
+        .route("/agent-swarm/proposals/close-stalled", post(swarm_close_stalled))
         .layer(CorsLayer::permissive())
         .with_state(state);
 

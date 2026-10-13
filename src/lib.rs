@@ -29,6 +29,7 @@ pub mod search_supervisor;
 pub mod quality_reflector;
 pub mod optimized_api;
 pub mod api_server;
+pub mod agent_swarm;
 pub mod graph_splat;
 pub mod mapreduce_indexer;
 pub mod auto_scaling;
