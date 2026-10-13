@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "description": "Agent-R seed: 3 incidentes históricos reales del linaje M2M (documentados en la skill _archive_agent-r, MEMORY.md). Se cargan SOLO si el estado persistido no existe.",
+  "errors": [
+    {
+      "id": 1,
+      "timestamp": 1771848000.0,
+      "category": "Fabrication",
+      "severity": "Critical",
+      "operation": "generate_benchmarks",
+      "what": "Invented benchmark data for M2M project",
+      "why": "Benchmarks were published as measured without running them (no real test execution)",
+      "context_tags": ["benchmarks", "M2M", "publishing"],
+      "prevention": "Only publish validated data from real test runs",
+      "recurrence": 2,
+      "pattern_id": null
+    },
+    {
+      "id": 2,
+      "timestamp": 1773835200.0,
+      "category": "SkippedValidation",
+      "severity": "Error",
+      "operation": "image2svg_pipeline",
+      "what": "Image2SVG failed 3x by skipping MASFactory analysis step",
+      "why": "Implementation started before the mandatory MASFactory analysis, failed 3 consecutive times",
+      "context_tags": ["MASFactory", "image2svg", "pipeline"],
+      "prevention": "Run MASFactory analysis before implementation",
+      "recurrence": 2,
+      "pattern_id": null
+    },
+    {
+      "id": 3,
+      "timestamp": 1774612800.0,
+      "category": "BadAssumption",
+      "severity": "Error",
+      "operation": "promise_long_task",
+      "what": "Promised long-running task without commitment tracking",
+      "why": "A long-running task was promised to the user with no tracking entry, so it was silently dropped",
+      "context_tags": ["agenda", "commitment", "tracking"],
+      "prevention": "Use agenda_cli.py commit before promising a long-running task",
+      "recurrence": 1,
+      "pattern_id": null
+    }
+  ]
+}

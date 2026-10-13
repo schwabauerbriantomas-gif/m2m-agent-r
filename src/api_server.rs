@@ -25,7 +25,7 @@ use tower_http::cors::CorsLayer;
 
 use crate::splats::SplatStore;
 use crate::config::M2MConfig;
-use crate::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use crate::agent_r::{AgentR, ErrorCategory, ErrorSeverity, WriteOutcome};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -233,6 +233,11 @@ struct RecordErrorRequest {
 #[derive(Serialize)]
 struct RecordErrorResponse {
     id: u64,
+    /// Dedup outcome: "Add" (new incident), "Update" (merged new info into
+    /// an existing incident), "Noop" (duplicate, bookkeeping only). (OPT-O4)
+    outcome: WriteOutcome,
+    /// Recurrence count of the incident after this write (0 on Add). (OPT-O4)
+    recurrence: u32,
 }
 
 fn parse_category(s: &str) -> ErrorCategory {
@@ -263,7 +268,7 @@ async fn record_error(
 ) -> Result<Json<RecordErrorResponse>, StatusCode> {
     let mut agent = state.agent_r.lock().await;
     let tags: Vec<&str> = req.context_tags.iter().map(|s| s.as_str()).collect();
-    let id = agent.record_error(
+    let (id, outcome, recurrence) = agent.record_error_dedup(
         parse_category(&req.category),
         parse_severity(&req.severity),
         &req.operation,
@@ -272,7 +277,7 @@ async fn record_error(
         &tags,
         &req.prevention,
     );
-    Ok(Json(RecordErrorResponse { id }))
+    Ok(Json(RecordErrorResponse { id, outcome, recurrence }))
 }
 
 #[derive(Deserialize)]
@@ -316,11 +321,22 @@ async fn agent_r_stats(
 pub async fn run_server(port: u16) -> anyhow::Result<()> {
     let config = M2MConfig::default();
     let store = SplatStore::new(config);
-    
+
+    // Agent-R state: snapshot path from AGENT_R_STATE_PATH or default
+    // "data/agent_r_state.json" relative to CWD. Load persisted state if the
+    // file exists (memory survives restarts); otherwise AgentR seeds the 3
+    // historical incidents and persists them (write-through from then on).
+    // Empty string => ephemeral (RAM only, no disk writes). (OPT-O4)
+    let agent_r = match std::env::var("AGENT_R_STATE_PATH") {
+        Ok(ref p) if p.is_empty() => AgentR::new_ephemeral(),
+        Ok(p) => AgentR::with_state_path(std::path::PathBuf::from(p)),
+        Err(_) => AgentR::with_state_path(std::path::PathBuf::from(AgentR::DEFAULT_STATE_PATH)),
+    };
+
     let state = AppState {
         store: Arc::new(Mutex::new(store)),
         next_id: Arc::new(Mutex::new(0)),
-        agent_r: Arc::new(Mutex::new(AgentR::new())),
+        agent_r: Arc::new(Mutex::new(agent_r)),
         index_dirty: Arc::new(tokio::sync::Notify::new()),
     };
 
