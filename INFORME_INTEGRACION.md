@@ -64,13 +64,14 @@ Con el harness ya en modo efímero (server sin state path):
 ### Escala 300k (pre-O4, `reports/int_raw_nocap/`)
 309,096 aceptados, 529.4 B/reg, ~5.5 min (base: 301k en ~17.3 min, rps 770→13.2).
 
-### **1M COMPLETO** (pre-O4, `reports/int_raw_1m/`)
-- 1,000,000/1,000,000 aceptados, ~20 min (proyección base: ~15 h ⇒ ~45× menos).
-- rps plano: mediana 827 primeras 5 ventanas vs 829 últimas (755-863).
-- Peak RSS 478 MiB = **501.9 B/reg** (base proyectada ~680 MB ⇒ −26%).
-- Re-validación a 1M CON O4+swarm: pendiente (los deltas esperados son mínimos:
-  O4 agrega 1 lookup HashMap + hash FNV por POST; swarm no toca el hot path de
-  ingesta).
+### **1M COMPLETO ×2** (`reports/int_raw_1m/` pre-O4, `reports/o4_raw_1m/` CON O4+swarm)
+- **CON O4+swarm (validación final)**: 1,000,000/1,000,000 en **19:10 min**,
+  rps mediana **901** (min 651, max 967), **decaimiento 0.1%** (902.8 primeras
+  5 ventanas vs 901.9 últimas) — lineal de 0 a 1M con dedup activo.
+- Peak RSS 547 MiB = **574.7 B/incidente**: +72.8 B sobre el pre-O4 (501.9) =
+  costo exacto de los 4 campos nuevos + índice de fingerprints de O4.
+- Pre-O4 (referencia): ~20 min, rps 755-863, 501.9 B/reg. Base 511ea9d:
+  proyección ~15 h ⇒ ~45× menos.
 
 ### Persistencia O4: costo del write-through (`/tmp` datapoint 13-oct, borrado)
 POSTs secuenciales con `AGENT_R_STATE_PATH` activo (sin dedup: incidentes únicos):
