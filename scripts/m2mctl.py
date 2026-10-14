@@ -190,7 +190,9 @@ def cmd_test(args):
         cmd = ["cargo", "test", "--lib"]
         if args.filter:
             cmd.append(args.filter)
-        env = dict(os.environ, CARGO_TARGET_DIR=RUST_TARGET)
+        # TMPDIR=/tmp: el TMPDIR heredado (scratch de Hermes) borra tmpfiles
+        # en vivo y rompe tests de persistencia en paralelo (flaky 274-276).
+        env = dict(os.environ, CARGO_TARGET_DIR=RUST_TARGET, TMPDIR="/tmp")
         r = subprocess.run(cmd, cwd=RUST_DIR, env=env, capture_output=True, text=True)
         tail = r.stdout.strip().splitlines()
         line = next((l for l in tail if l.startswith("test result:")), None)
@@ -200,10 +202,15 @@ def cmd_test(args):
         if not os.path.isdir(PY_VENV):
             results["python"] = {"ok": False, "error": f"sin venv; correr: m2mctl.py build py"}
         else:
-            cmd = [f"{PY_VENV}/bin/python", "-m", "pytest", "tests/", "-q", "--no-header"]
+            # TMPDIR=/tmp + capture=no: el TMPDIR heredado (scratch de Hermes)
+            # borra tmpfiles en vivo => FileNotFoundError en capture de pytest
+            # (0 tests colectados). Con capture=no corre normal.
+            cmd = [f"{PY_VENV}/bin/python", "-m", "pytest", "tests/", "-q",
+                   "--no-header", "-p", "no:cacheprovider", "--capture=no"]
             if args.filter:
                 cmd += ["-k", args.filter]
-            r = subprocess.run(cmd, cwd=PY_DIR, capture_output=True, text=True)
+            env = dict(os.environ, TMPDIR="/tmp")
+            r = subprocess.run(cmd, cwd=PY_DIR, env=env, capture_output=True, text=True)
             tail = [l for l in r.stdout.strip().splitlines() if l][-3:]
             results["python"] = {"ok": r.returncode == 0, "tail": tail,
                                  "cmd": " ".join(cmd)}
