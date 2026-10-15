@@ -11,6 +11,8 @@
 //!     POST /agent-r/validate      - Validate output against error patterns
 //!     GET  /agent-r/stats         - Get Agent-R statistics
 
+use serde_json::{json, Value};
+
 use axum::{
     extract::State,
     http::StatusCode,
@@ -862,6 +864,120 @@ fn default_debug_budget() -> usize {
     3
 }
 
+/// GET /agent-r/questions — curiosidad guiada (ronda 3): lista preguntas
+/// abiertas/cerradas del snapshot. ?status=open|answered filtra.
+async fn agent_r_questions(
+    State(state): State<AppState>,
+) -> Json<Value> {
+    let ar = state.agent_r.clone();
+    let questions = tokio::task::spawn_blocking(move || {
+        let guard = futures_rt_block_on(async { ar.lock().await });
+        let a = guard;
+        a.questions_iter()
+            .map(|q| json!({
+                "id": q.id,
+                "priority": format!("{:?}", q.priority),
+                "status": format!("{:?}", q.status),
+                "text": q.text,
+                "answer": q.answer.as_ref().map(|s| s.to_string()),
+                "lesson_id": q.lesson_id,
+            }))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+    match questions {
+        Ok(list) => Json(json!({"questions": list})),
+        Err(e) => Json(json!({"error": e.1})),
+    }
+}
+
+#[derive(Deserialize)]
+struct AskRequest {
+    /// Tipo de punto crítico: metric_delta | claim_unvalidated | security_finding | surprise
+    kind: String,
+    /// Campos según kind (metric/from/to | claim | finding | expected/got)
+    metric: Option<String>,
+    from: Option<f64>,
+    to: Option<f64>,
+    claim: Option<String>,
+    finding: Option<String>,
+    expected: Option<String>,
+    got: Option<String>,
+}
+
+/// POST /agent-r/questions — curiosidad guiada (ronda 3): dispara una pregunta
+/// según el punto crítico reportado (dedup por texto en la lib).
+async fn agent_r_ask(
+    State(state): State<AppState>,
+    Json(req): Json<AskRequest>,
+) -> Json<Value> {
+    use crate::meta_curiosity::{self, CriticalPoint};
+    let ar = state.agent_r.clone();
+    let point = match req.kind.as_str() {
+        "metric_delta" => CriticalPoint::MetricDelta {
+            metric: req.metric.unwrap_or_default(),
+            from: req.from.unwrap_or(0.0),
+            to: req.to.unwrap_or(0.0),
+        },
+        "claim_unvalidated" => CriticalPoint::ClaimWithoutValidation {
+            claim: req.claim.unwrap_or_default(),
+        },
+        "security_finding" => CriticalPoint::SecurityFinding {
+            finding: req.finding.unwrap_or_default(),
+        },
+        "surprise" => CriticalPoint::Surprise {
+            expected: req.expected.unwrap_or_default(),
+            got: req.got.unwrap_or_default(),
+        },
+        other => {
+            return Json(json!({"error": format!("kind desconocido: {other} (validos: metric_delta, claim_unvalidated, security_finding, surprise)")}))
+        }
+    };
+    let id = tokio::task::spawn_blocking(move || {
+        let guard = futures_rt_block_on(async { ar.lock().await });
+        let mut a = guard;
+        match req.kind.as_str() {
+            "metric_delta" => {
+                // el umbral lo fija el caller vía from/to — ask directo
+                meta_curiosity::ask(&mut a, point)
+            }
+            _ => meta_curiosity::ask(&mut a, point),
+        }
+    })
+    .await
+    .map(|rid| json!({"question_id": rid}))
+    .unwrap_or_else(|e| json!({"error": e.to_string()}));
+    Json(id)
+}
+
+#[derive(Deserialize)]
+struct AnswerRequest {
+    answer: String,
+    lesson_id: u64,
+}
+
+/// POST /agent-r/questions/:id/answer — cerrar pregunta con evidencia.
+async fn agent_r_answer(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<u64>,
+    Json(req): Json<AnswerRequest>,
+) -> Json<Value> {
+    let ar = state.agent_r.clone();
+    let ok = tokio::task::spawn_blocking(move || {
+        let guard = futures_rt_block_on(async { ar.lock().await });
+        let mut a = guard;
+        a.answer_question(id, &req.answer, req.lesson_id, None)
+    })
+    .await
+    .unwrap_or(false);
+    if ok {
+        Json(json!({"ok": true}))
+    } else {
+        Json(json!({"ok": false, "error": "pregunta inexistente o ya respondida"}))
+    }
+}
+
 /// POST /agent-r/self-debug — Self-Debug con budget (Capa 2): loop
 /// crítico glm-5.3-flash → N0–N3 hasta pass o agotar budget. Cada iteración
 /// con receipt; decisión conservadora (solo pass verificado reemplaza).
@@ -959,6 +1075,9 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-r/receipts/issue", post(receipts_issue))
         .route("/agent-r/receipts/verify", post(receipts_verify))
         .route("/agent-r/refine", post(agent_r_refine))
+        .route("/agent-r/questions", get(agent_r_questions))
+        .route("/agent-r/questions/ask", post(agent_r_ask))
+        .route("/agent-r/questions/:id/answer", post(agent_r_answer))
         .route("/agent-r/self-debug", post(agent_r_self_debug))
         .route("/agent-swarm/register", post(swarm_register))
         .route("/agent-swarm/heartbeat", post(swarm_heartbeat))
