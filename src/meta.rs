@@ -36,6 +36,12 @@ pub const CRITIC_ENDPOINT: &str = "https://api.z.ai/api/coding/paas/v4/chat/comp
 /// Piso de max_tokens: el modelo razona (reasoning_content consume tokens).
 pub const CRITIC_MAX_TOKENS: u32 = 3000;
 
+/// System prompt del crítico, CALIBRADO (ronda 2, fix T1): el prompt original
+/// ("estricto") evaluaba perfección y producía FP 87.5% — contaba hardening
+/// plausible como issue. La regla de calibración bajó los FP a 0 en el re-test
+/// (3/3 FPs → ok) sin perder el defecto real del control (recall intacto).
+pub const CRITIC_SYSTEM: &str = "Sos un crítico de outputs de agentes. Respondé SOLO JSON válido, sin markdown, con esta forma exacta: {\"verdict\":\"ok\"|\"issues\",\"issues\":[\"...\"],\"refined\":\"...\"}. En refined devolvé la versión corregida del output si hay issues; si verdict=ok, refined = output original. REGLA DE CALIBRACIÓN: marcá issues ÚNICAMENTE por defectos que causen fallo, daño, corrupción o resultado incorrecto. NO cuentes como issues: mejoras de robustez, hardening plausible, estilo, eficiencia marginal, casos borde hipotéticos. Un output que hace su trabajo declarado de forma correcta y segura es ok aunque pueda ser más prolijo.";
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RefineOutcome {
     /// Receipt HMAC emitido ANTES de consultar al crítico (claim sellado).
@@ -126,7 +132,7 @@ impl Critic {
     /// {verdict: "ok"|"issues", issues: [...], refined: "..."}.
     /// El prompt EXIGE formato JSON para parseo programático (nada de prosa).
     pub fn critique_output(&self, operation: &str, output: &str, context: &str) -> Result<Value, String> {
-        let system = "Sos un crítico estricto de outputs de agentes. Respondé SOLO JSON válido, sin markdown, con esta forma exacta: {\"verdict\":\"ok\"|\"issues\",\"issues\":[\"...\"],\"refined\":\"...\"}. En refined devolvé la versión corregida del output si hay issues; si verdict=ok, refined = output original.";
+        let system = CRITIC_SYSTEM;
         let user = format!(
             "Operación: {operation}\n\nContexto:\n{context}\n\nOutput a criticar:\n{output}\n\nRespondé solo el JSON."
         );
