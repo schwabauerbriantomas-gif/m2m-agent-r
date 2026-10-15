@@ -1675,6 +1675,50 @@ impl AgentR {
         false
     }
 
+    /// AWM induce_workflows (Capa 2): inducir workflows desde la memoria de
+    /// éxitos — secuencias (A→B→C) que aparecen ≥`min_count` veces en orden
+    /// temporal. Los workflows se guardan como skills con nombre canónico
+    /// "workflow:a→b→c" y SOLO cuentan si los éxitos tuvieron receipt
+    /// (verificado). Devuelve los ids de skills creados.
+    pub fn induce_workflows(&mut self, window: usize, min_count: usize) -> Vec<u64> {
+        let window = window.clamp(2, 5);
+        let mut op_seq: Vec<InternedId> = self
+            .successes
+            .iter()
+            .filter(|s| s.receipt_id.is_some()) // solo éxitos verificados
+            .map(|s| s.operation)
+            .collect();
+        op_seq.dedup(); // colapsar repetidos consecutivos
+        if op_seq.len() < window {
+            return Vec::new();
+        }
+        // Contar subsecuencias contiguas de largo `window`
+        let mut counts: std::collections::HashMap<Vec<InternedId>, usize> = std::collections::HashMap::new();
+        for w in op_seq.windows(window) {
+            *counts.entry(w.to_vec()).or_insert(0) += 1;
+        }
+        let mut created = Vec::new();
+        for (seq, n) in counts {
+            if n < min_count {
+                continue;
+            }
+            let names: Vec<String> = seq.iter().map(|op| self.resolve(*op).to_string()).collect();
+            let name = format!("workflow:{}", names.join("→"));
+            let first_op = names[0].clone();
+            let body = format!("Workflow inducido de {n} éxitos verificados: {name}");
+            // Reutiliza record_skill (dedup + gate de verificación: el
+            // workflow nace con receipt implícito = los éxitos que lo forman).
+            let sid = self.record_skill(
+                &first_op,
+                &name,
+                &body,
+                Some(format!("awm:{}", now_secs())),
+            );
+            created.push(sid);
+        }
+        created
+    }
+
     fn schedule_flush_compat(&mut self) {
         self.persist_snapshot();
     }
@@ -1781,6 +1825,42 @@ impl AgentR {
             }
         };
         (outcome, self.w_content)
+    }
+
+    /// STaR-promotion (Capa 2): igual que tuning_feedback pero el W↑ solo
+    /// ocurre si `receipt_store.verify` valida el receipt del outcome — la
+    /// promoción de reglas/pesos requiere EVIDENCIA firmada, no self-report.
+    /// Sin receipt o con receipt inválido: el hit no promociona (W constante)
+    /// y el miss castiga normal. Devuelve (outcome, w, promoted).
+    pub fn tuning_feedback_star(
+        &mut self,
+        predicted: Option<u64>,
+        actual: Option<u64>,
+        store: &crate::receipts::ReceiptStore,
+        receipt_id: Option<&str>,
+    ) -> (&'static str, f64, bool) {
+        match (predicted, actual) {
+            (Some(p), Some(a)) if p == a => {
+                let verified = receipt_id
+                    .map(|rid| store.verify_receipt(rid).valid)
+                    .unwrap_or(false);
+                if verified {
+                    self.w_content = (self.w_content * 1.05).min(6.0);
+                    self.tuning_hits += 1;
+                    ("hit", self.w_content, true)
+                } else {
+                    // hit sin evidencia: reconocido pero NO promociona (STaR gate)
+                    self.tuning_hits += 1;
+                    ("hit_unpromoted", self.w_content, false)
+                }
+            }
+            (None, _) => ("abstain", self.w_content, false),
+            (Some(_), _) => {
+                self.w_content = (self.w_content * 0.95).max(0.5);
+                self.tuning_misses += 1;
+                ("miss", self.w_content, false)
+            }
+        }
     }
 
     /// Contadores del loop (para /status y para detectar deriva).
@@ -3913,6 +3993,50 @@ mod rsi_capa2_tests {
             "timeout en fase 2", "gpu sync faltante", &["bench"], "");
         assert!(a.set_lesson(id, "fix: sincronizar ctx antes de medir", Some("rcpt_fix1".into())));
         assert_eq!(a.errors.iter().find(|e| e.id == id).unwrap().lesson.as_deref(), Some("fix: sincronizar ctx antes de medir"));
+    }
+
+    #[test]
+    fn test_star_promotion_gate_por_receipt() {
+        use crate::receipts::ReceiptStore;
+        let mut a = AgentR::new_ephemeral();
+        let dir = std::env::temp_dir().join(format!("rsi_star_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ReceiptStore::open_no_env(&dir).unwrap();
+        let rid = store.issue(&serde_json::json!({"outcome": "hit", "op": "x"})).map(|r| r.id).ok();
+
+        let w0 = a.tuning_stats().2;
+        // hit SIN receipt: hit_unpromoted (W constante)
+        let (o1, w1, p1) = a.tuning_feedback_star(Some(7), Some(7), &store, None);
+        assert_eq!(o1, "hit_unpromoted"); assert!(!p1); assert_eq!(w1, w0);
+        // hit CON receipt válido: promociona (W sube)
+        let (o2, w2, p2) = a.tuning_feedback_star(Some(7), Some(7), &store, rid.as_deref());
+        assert_eq!(o2, "hit"); assert!(p2); assert!(w2 > w0);
+        // receipt inválido: no promociona
+        let (o3, w3, p3) = a.tuning_feedback_star(Some(7), Some(7), &store, Some("rcpt_inexistente"));
+        assert_eq!(o3, "hit_unpromoted"); assert!(!p3); assert_eq!(w3, w2);
+        // miss castiga normal
+        let (_, w4, _) = a.tuning_feedback_star(Some(7), None, &store, rid.as_deref());
+        assert!(w4 < w2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_awm_induce_workflows_solo_verificados() {
+        let mut a = AgentR::new_ephemeral();
+        // 3 éxitos con receipt de la misma secuencia x2
+        for _ in 0..2 {
+            for op in ["build", "test", "deploy"] {
+                let id = a.record_success(op, "ok", Some(format!("rcpt_{}", now_secs())));
+                let _ = id;
+            }
+        }
+        // 1 éxito sin receipt (no debe contar)
+        let _ = a.record_success("build", "ok", None);
+        let created = a.induce_workflows(3, 2);
+        assert_eq!(created.len(), 1, "un workflow build→test→deploy");
+        let skills = a.recall_skills("build");
+        assert!(skills.iter().any(|s| s.name.contains("workflow:build→test→deploy")));
     }
 
     #[test]
