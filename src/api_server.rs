@@ -644,26 +644,58 @@ struct PreflightRequest {
 async fn preflight_check(
     State(state): State<AppState>,
     Json(req): Json<PreflightRequest>,
-) -> Result<Json<crate::agent_r::PreflightResult>, StatusCode> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut agent = state.agent_r.lock().await;
     let tags: Vec<&str> = req.context_tags.iter().map(|s| s.as_str()).collect();
-    let result = agent.preflight(&req.operation, &tags);
-    Ok(Json(result))
+    // Preflight v2 (pendiente 2a): score compuesto + top-3 + sugerencia.
+    // Campos v1 (proceed/warnings/precautions/relevant_errors) preservados.
+    let result = agent.preflight_v2(&req.operation, &tags);
+    Ok(Json(serde_json::json!({
+        "proceed": result.proceed,
+        "warnings": result.warnings,
+        "precautions": result.precautions,
+        "relevant_errors": result.relevant_errors,
+        "top_rules": result.top_rules,
+        "suggestion": result.suggestion,
+        "veto_reason": result.veto_reason,
+    })))
 }
 
 #[derive(Deserialize)]
 struct ValidateOutputRequest {
     operation: String,
     output: serde_json::Value,
+    /// Evidencia programática del llamador para N2 (pendiente 2a):
+    /// {"exit_code": 0, "stderr": "...", "diff": "...", "expected_exit_code": 0}.
+    #[serde(default)]
+    evidence: Option<serde_json::Value>,
 }
 
 async fn validate_output(
     State(state): State<AppState>,
     Json(req): Json<ValidateOutputRequest>,
-) -> Result<Json<crate::agent_r::ValidationResult>, StatusCode> {
+) -> Result<Json<serde_json::Value>, StatusCode> {
     let mut agent = state.agent_r.lock().await;
-    let result = agent.validate_output(&req.operation, &req.output);
-    Ok(Json(result))
+    // Validate v2 (pendiente 2a): veredictos N0-N3 + overall + suggestion.
+    // Compat: valid/confidence mapeados desde overall; issues en formato legado.
+    let r = agent.validate_output_v2_evidence(&req.operation, &req.output, req.evidence.as_ref());
+    Ok(Json(serde_json::json!({
+        "verdicts": {
+            "n0_form": r.verdicts.n0_form,
+            "n1_numeric_consistency": r.verdicts.n1_numeric_consistency,
+            "n2_caller_evidence": r.verdicts.n2_caller_evidence,
+            "n3_receipt": r.verdicts.n3_receipt,
+        },
+        "overall": r.overall,
+        "suggestion": r.suggestion,
+        "details": r.details,
+        // ── compat campos viejos ──
+        "valid": r.valid,
+        "confidence": r.confidence,
+        "issues": r.issues,
+        "checks_run": r.checks_run,
+        "elapsed_ms": r.elapsed_ms,
+    })))
 }
 
 async fn agent_r_stats(

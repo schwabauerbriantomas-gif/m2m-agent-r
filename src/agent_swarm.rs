@@ -813,13 +813,18 @@ impl AgentSwarm {
 
     /// Preflight compartido: valida una operación contra las lecciones de
     /// TODO el swarm (no sólo del agente local — es una sola memoria).
+    /// v2 (pendiente 2a): paridad con el scoring compuesto del endpoint
+    /// /agent-r/preflight (mismo preflight_v2 + campos top-3/sugerencia).
     pub fn preflight_shared(&self, agent_r: &mut AgentR, operation: &str, tags: &[&str]) -> serde_json::Value {
-        let r = agent_r.preflight(operation, tags);
+        let r = agent_r.preflight_v2(operation, tags);
         serde_json::json!({
             "proceed": r.proceed,
             "relevant_errors": r.relevant_errors,
             "warnings": r.warnings,
             "precautions": r.precautions,
+            "top_rules": r.top_rules,
+            "suggestion": r.suggestion,
+            "veto_reason": r.veto_reason,
         })
     }
 }
