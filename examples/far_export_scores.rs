@@ -78,6 +78,7 @@ fn main() {
     // Modelo y game por episodio de test
     let mut model_of_ep: HashMap<String, String> = HashMap::new();
     let mut game_of_ep: HashMap<String, String> = HashMap::new();
+    let mut ep_by_id_full: HashMap<String, Value> = HashMap::new();
     for ep in &episodes {
         let m = ep["model"].as_str().unwrap_or("unknown");
         model_of_ep.insert(
@@ -88,6 +89,7 @@ fn main() {
             ep["id"].as_str().unwrap_or("").to_string(),
             ep["game"].as_str().unwrap_or("level-1").to_string(),
         );
+        ep_by_id_full.insert(ep["id"].as_str().unwrap_or("").to_string(), ep.clone());
     }
 
     let mut out_tasks: Vec<Value> = Vec::new();
@@ -106,6 +108,33 @@ fn main() {
         let model = model_of_ep.get(&test_id).cloned().unwrap_or_else(|| "unknown".into());
 
         let all = agent.preflight_v2_scored_all(&game, &[&model, "babyai", "level-1"]);
+        // Híbrido: mismo re-ranking que producción (situación = trayectoria
+        // hasta el decision_point, binario IDF, W=3) sobre el top-3 v2.
+        let situation = {
+            let ep = ep_by_id_full.get(&test_id);
+            let dp = ts["decision_point"].as_i64().unwrap_or(-1);
+            let mut s = String::new();
+            if let Some(ep) = ep {
+                let traj = ep["snapshot"].get("trajectory").and_then(|t| t.as_array());
+                if let Some(steps) = traj {
+                    let upto = if dp > 0 { (dp as usize).min(steps.len()) } else { steps.len() };
+                    for st in &steps[..upto] {
+                        s.push_str(st.get("obs").and_then(|o| o.as_str()).unwrap_or(""));
+                        s.push(' ');
+                        s.push_str(&st.get("act").or_else(|| st.get("action"))
+                            .map(|a| a.to_string()).unwrap_or_default());
+                        s.push(' ');
+                    }
+                }
+            }
+            s
+        };
+        let hyb = agent.preflight_v2_hybrid(&game, &[&model, "babyai", "level-1"], &situation);
+        let hybrid_top: Vec<Value> = hyb
+            .top_rules
+            .iter()
+            .map(|r| serde_json::json!({"id": r.id, "score": r.score}))
+            .collect();
         let scored: Vec<Value> = all
             .iter()
             .map(|r| {
@@ -123,6 +152,7 @@ fn main() {
             "decision_point": ts["decision_point"],
             "lesson_eps": lesson_eps,
             "scored_rules": scored,
+            "hybrid_top": hybrid_top,
         }));
     }
 

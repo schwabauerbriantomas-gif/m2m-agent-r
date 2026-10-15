@@ -142,6 +142,22 @@ fn now_secs() -> f64 {
         .as_secs_f64()
 }
 
+/// Tokenizador de contenido (bench 15-oct): lowercase, [a-z]+, sin
+/// stopwords, len>2. MISMA definición que los compositores offline — si
+/// cambia acá o ahí, el híbrido deja de reproducir los números del bench.
+fn tokenize_words(text: &str) -> Vec<String> {
+    const STOP: [&str; 26] = [
+        "the", "and", "for", "not", "are", "was", "were", "been", "its",
+        "with", "from", "you", "your", "there", "that", "this", "those",
+        "these", "can", "will", "just", "but", "has", "had", "into", "out",
+    ];
+    text.to_lowercase()
+        .split(|c: char| !c.is_ascii_lowercase())
+        .filter(|t| t.len() > 2 && !STOP.contains(t))
+        .map(|t| t.to_string())
+        .collect()
+}
+
 fn severity_rank(s: ErrorSeverity) -> u8 {
     match s {
         ErrorSeverity::Warning => 0,
@@ -1277,6 +1293,166 @@ impl AgentR {
             warnings,
             precautions,
             relevant_errors: n_relevant,
+            top_rules,
+            suggestion,
+            veto_reason,
+        }
+    }
+
+    /// Preflight v2 HÍBRIDO (bench composición 15-oct): SELECCIÓN de
+    /// candidatos con las dos señales, no solo re-rank del top-3 v2.
+    ///
+    /// score_final = s_compuesto_v2 + W · c_idf_binario, con
+    ///   c_idf = Σ ln((N+1)/(df+0.5)) por token de `what` PRESENTE en
+    ///           `situation` (presencia binaria, NUNCA frecuencia).
+    ///
+    /// El top-3/veto/warnings se computa sobre ese ranking global (así el
+    /// contenido PUEDE promover al top-3 una regla que la señal estructural
+    /// dejó afuera — en el bench eso era la mitad de la ganancia).
+    /// Hallazgos que fija (BenchTrace, n=31): matching de lecciones es de
+    /// PRESENCIA (frecuencia hunde top3 48%→29%); W=3 equilibra unidades
+    /// (s mediana ~28, c mediana ~4.5). Números v2→híbrido:
+    /// top1 16.1%→19.4% (lib, top3 v2) y 29.0%→29.0% en selección global
+    /// el compositor offline con este scorer midió top1 29.0%/top5 58.1%.
+    pub fn preflight_v2_hybrid(
+        &mut self,
+        operation: &str,
+        tags: &[&str],
+        situation: &str,
+    ) -> PreflightResultV2 {
+        const W_CONTENT: f64 = 3.0;
+        let q_tokens: std::collections::HashSet<String> =
+            tokenize_words(situation).into_iter().collect();
+
+        // ── Scorer estructural + contenido en un solo pass sobre el pool ──
+        let now = now_secs();
+        let op_id = self.string_pool_index.get(operation).copied();
+        let tag_ids: Vec<InternedId> = tags
+            .iter()
+            .filter_map(|t| self.string_pool_index.get(*t).copied())
+            .collect();
+        // Token-sets de las reglas activas + df (corpus local, O(n)).
+        let active: Vec<&ErrorRecord> =
+            self.errors.iter().filter(|e| !e.deprecated).collect();
+        let n_rules = active.len() as f64;
+        let mut df: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let rule_tokens: Vec<(u64, std::collections::HashSet<String>)> = active
+            .iter()
+            .map(|e| {
+                let set: std::collections::HashSet<String> =
+                    tokenize_words(&e.what).into_iter().collect();
+                for t in &set {
+                    *df.entry(t.clone()).or_default() += 1;
+                }
+                (e.id, set)
+            })
+            .collect();
+        let token_of = |id: u64| -> Option<&std::collections::HashSet<String>> {
+            rule_tokens.iter().find(|(rid, _)| *rid == id).map(|(_, t)| t)
+        };
+
+        // score híbrido de TODAS las activas; heap top-3 idéntico a v2.
+        let mut heap: BinaryHeap<Reverse<(u64, Reverse<usize>)>> =
+            BinaryHeap::with_capacity(4);
+        let mut hybrid_of: std::collections::HashMap<u64, f64> =
+            std::collections::HashMap::new();
+        for (idx, e) in active.iter().enumerate() {
+            let base = self.preflight_v2_score(e, op_id, &tag_ids, now);
+            let c_idf: f64 = token_of(e.id)
+                .map(|toks| {
+                    toks.iter()
+                        .filter(|t| q_tokens.contains(*t))
+                        .map(|t| {
+                            ((n_rules + 1.0) / (*df.get(t).unwrap_or(&0) as f64 + 0.5)).ln()
+                        })
+                        .sum()
+                })
+                .unwrap_or(0.0);
+            let score = base + W_CONTENT * c_idf;
+            hybrid_of.insert(e.id, score);
+            if score <= 0.0 {
+                continue;
+            }
+            let key = (score.to_bits(), Reverse(idx));
+            if heap.len() < 3 {
+                heap.push(Reverse(key));
+            } else if heap.peek().is_some_and(|Reverse(worst)| *worst < key) {
+                heap.pop();
+                heap.push(Reverse(key));
+            }
+        }
+        let mut top: Vec<&ErrorRecord> = Vec::with_capacity(heap.len());
+        while let Some(Reverse((_, Reverse(idx)))) = heap.pop() {
+            top.push(active[idx]);
+        }
+        top.reverse();
+
+        // ── Veredictos: misma política que preflight_v2, sobre el nuevo top ──
+        let mut should_block = false;
+        let mut warnings: Vec<String> = Vec::new();
+        let mut precautions: Vec<String> = Vec::new();
+        let mut suggestion: Option<String> = None;
+        let mut veto_reason: Option<String> = None;
+        for e in &top {
+            let op_str = self.resolve(e.operation);
+            if e.severity == ErrorSeverity::Critical && (e.recurrence as u64 + 1) >= 2 {
+                should_block = true;
+                let w = format!(
+                    "BLOCKED: recurring critical rule [{}] {}: {}",
+                    e.id,
+                    op_str,
+                    e.what
+                );
+                if !warnings.contains(&w) {
+                    warnings.push(w);
+                }
+                if veto_reason.is_none() {
+                    veto_reason = Some(format!(
+                        "rule {} [{}] critical, seen {}x, no open FPs",
+                        e.id,
+                        op_str,
+                        e.recurrence + 1
+                    ));
+                }
+            } else if e.severity == ErrorSeverity::Critical {
+                let w = format!(
+                    "WARNING: past critical rule [{}] {}: {}",
+                    e.id,
+                    op_str,
+                    e.what
+                );
+                if !warnings.contains(&w) {
+                    warnings.push(w);
+                }
+            }
+            if !e.prevention.is_empty() {
+                let p = format!("[{}] {}", op_str, e.prevention);
+                if !precautions.contains(&p) {
+                    precautions.push(p);
+                }
+            }
+            if suggestion.is_none() && !e.prevention.is_empty() {
+                suggestion = Some(format!("[{}] {}", op_str, e.prevention));
+            }
+        }
+        if should_block {
+            self.stats.prefights_blocked += 1;
+        }
+        let top_rules: Vec<ScoredRule> = top
+            .iter()
+            .map(|e| ScoredRule {
+                id: e.id,
+                operation: self.resolve(e.operation).to_string(),
+                what: e.what.to_string(),
+                score: hybrid_of.get(&e.id).copied().unwrap_or(0.0),
+            })
+            .collect();
+        PreflightResultV2 {
+            proceed: !should_block,
+            warnings,
+            precautions,
+            relevant_errors: top_rules.len(),
             top_rules,
             suggestion,
             veto_reason,
@@ -2737,6 +2913,105 @@ mod tests {
         let r = agent.validate_output_v2("op", &serde_json::json!({"ok": true}));
         assert_eq!(r.verdicts.n3_receipt, LevelVerdict::Unverifiable);
         assert!(r.details.iter().any(|d| d.contains("N3")));
+    }
+
+    /// Híbrido (bench 15-oct): la señal de contenido re-ordena el top-3 —
+    /// la regla cuyo `what` comparte tokens con la situación sube.
+    #[test]
+    fn test_preflight_v2_hybrid_content_reranks() {
+        let mut agent = AgentR::new_ephemeral();
+        // Regla A: op compartida, contenido AJENO; 2 incidentes => mayor
+        // frecuencia => domina el base de forma determinista (el orden base
+        // por recencia solo tiene ruido de nanosegundos).
+        let _ = agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Error,
+            "level-1",
+            "grey box blocked the corridor path",
+            "grey box blocked path",
+            &["babyai"],
+            "",
+        );
+        let _ = agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Error,
+            "level-1",
+            "grey box blocked the corridor path again",
+            "grey box blocked path",
+            &["babyai"],
+            "",
+        );
+        // Regla B: misma op, contenido que SÍ matchea la situación.
+        agent.record_error(
+            ErrorCategory::BadAssumption,
+            ErrorSeverity::Error,
+            "level-1",
+            "agent ignored red ball mission and searched socket",
+            "ignored mission",
+            &["babyai"],
+            "",
+        );
+        let situation = "Mission: go to the red ball. You see a socket and a table.";
+        let base = agent.preflight_v2("level-1", &["babyai"]);
+        let hyb = agent.preflight_v2_hybrid("level-1", &["babyai"], situation);
+        let is_b = |r: &ScoredRule| r.what.contains("red ball");
+        let b_before = base.top_rules.iter().position(is_b).expect("regla B en base");
+        let b_after = hyb.top_rules.iter().position(is_b).expect("regla B en híbrido");
+        assert!(b_after < b_before, "regla con overlap debe subir: before={b_before} after={b_after}");
+    }
+
+    /// Híbrido: PRESENCIA, no frecuencia — repetir tokens de la regla en la
+    /// situación NO cambia el score (hallazgo del bench: frecuencia hunde
+    /// top3 de 48% a 29%). Tolerancia relativa: recencia usa now() y varía
+    /// ~1e-9 entre llamadas.
+    #[test]
+    fn test_preflight_v2_hybrid_binary_not_frequency() {
+        let mut agent = AgentR::new_ephemeral();
+        agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Error,
+            "op",
+            "socket timeout while parsing payload",
+            "why",
+            &[],
+            "",
+        );
+        let once = agent.preflight_v2_hybrid("op", &[], "socket appeared once");
+        let many = agent.preflight_v2_hybrid(
+            "op",
+            &[],
+            "socket socket socket socket socket socket socket",
+        );
+        let s1 = once.top_rules[0].score;
+        let s2 = many.top_rules[0].score;
+        assert!(
+            (s1 - s2).abs() <= s1.abs() * 1e-6,
+            "presencia binaria: {s1} vs {s2}"
+        );
+    }
+
+    /// Híbrido: sin situación o con una sola regla => passthrough (los
+    /// scores coinciden dentro de tolerancia temporal).
+    #[test]
+    fn test_preflight_v2_hybrid_passthrough() {
+        let mut agent = AgentR::new_ephemeral();
+        agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Error,
+            "op",
+            "something failed",
+            "why",
+            &[],
+            "",
+        );
+        let base = agent.preflight_v2("op", &[]);
+        let hyb = agent.preflight_v2_hybrid("op", &[], "");
+        let s0 = base.top_rules[0].score;
+        let s1 = hyb.top_rules[0].score;
+        assert!((s0 - s1).abs() <= s0.abs() * 1e-6, "{s0} vs {s1}");
+        let hyb2 = agent.preflight_v2_hybrid("op", &[], "estado irrelevante");
+        let s2 = hyb2.top_rules[0].score;
+        assert!((s0 - s2).abs() <= s0.abs() * 1e-6, "{s0} vs {s2}"); // 1 regla => sin re-rank
     }
 
     /// Sin oráculo en NINGÚN nivel => overall unverifiable (no fail).
