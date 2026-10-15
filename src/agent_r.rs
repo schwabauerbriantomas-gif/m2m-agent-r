@@ -376,6 +376,10 @@ struct StateSnapshot {
     /// STaR receipts ya quemados (v1-compat).
     #[serde(default)]
     promoted_receipts: Vec<String>,
+    /// Curiosidad guiada (v1-compat): se serializa directo (Question deriva
+    /// Serialize/Deserialize; CriticalPoint vía serde).
+    #[serde(default)]
+    questions: Vec<crate::meta_curiosity::Question>,
 }
 
 /// Versión serializable de InsightRecord / SkillRecord (operation String).
@@ -580,6 +584,10 @@ pub struct AgentR {
     /// receipt válido N veces infla W al cap (vector destapado por el fuzzing
     /// del swarm: 50 re-uses → W 3.0→6.0).
     pub promoted_receipts: std::collections::HashSet<String>,
+    /// Curiosidad guiada (meta_curiosity): preguntas abiertas en puntos
+    /// críticos — el sistema se pregunta a sí mismo lo que un humano tendría
+    /// que preguntarle (valida numéricamente / ¿por qué baja el recall? / …).
+    pub questions: Vec<crate::meta_curiosity::Question>,
     /// Self-tuning (15-oct): peso de la señal de contenido del preflight
     /// híbrido, ajustable por feedback de outcomes reales. Fábrica 3.0
     /// (bench 15-oct). Persistido en el snapshot si está presente.
@@ -699,6 +707,7 @@ impl AgentR {
             insights: Vec::new(),
             skills: Vec::new(),
             promoted_receipts: std::collections::HashSet::new(),
+            questions: Vec::new(),
             next_id: 1,
             w_content: 3.0,
             tuning_hits: 0,
@@ -756,6 +765,7 @@ impl AgentR {
             insights: Vec::new(),
             skills: Vec::new(),
             promoted_receipts: std::collections::HashSet::new(),
+            questions: Vec::new(),
             next_id: 1,
             w_content: 3.0,
             tuning_hits: 0,
@@ -946,6 +956,7 @@ impl AgentR {
                 deprecated: s.deprecated,
             }).collect(),
             promoted_receipts: self.promoted_receipts.iter().cloned().collect(),
+            questions: self.questions.clone(),
         })
     }
 
@@ -1016,6 +1027,7 @@ impl AgentR {
             deprecated: s.deprecated,
         }).collect();
         self.promoted_receipts = snap.promoted_receipts.into_iter().collect();
+        self.questions = snap.questions;
         self.rebuild_recurrence_index();
         self.rebuild_fingerprint_index();
         Ok(self.errors.len())
@@ -1742,6 +1754,67 @@ impl AgentR {
     /// Path del snapshot (None en RAM-only). Para evolve/rollback.
     pub fn state_path_opt(&self) -> Option<&std::path::PathBuf> {
         self.state_path.as_ref()
+    }
+
+    /// Curiosidad guiada: registrar pregunta (dedup por texto — mismo punto
+    /// crítico no dispara dos veces).
+    pub fn add_question(
+        &mut self,
+        point: crate::meta_curiosity::CriticalPoint,
+        text: String,
+        priority: crate::meta_curiosity::Priority,
+    ) -> u64 {
+        for q in self.questions.iter() {
+            if q.status == crate::meta_curiosity::QStatus::Open && q.text == text {
+                return q.id; // dedup
+            }
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        self.questions.push(crate::meta_curiosity::Question {
+            id,
+            timestamp: now_secs(),
+            point,
+            text,
+            priority,
+            status: crate::meta_curiosity::QStatus::Open,
+            answer: None,
+            lesson_id: None,
+            receipt_id: None,
+        });
+        self.persist_snapshot();
+        id
+    }
+
+    /// Iterador de preguntas (para meta_curiosity::elaborate y consultas).
+    pub fn questions_iter(&self) -> impl Iterator<Item = &crate::meta_curiosity::Question> {
+        self.questions.iter()
+    }
+
+    /// Cerrar una pregunta con evidencia: respuesta + lección en memoria +
+    /// receipt opcional de la investigación (N2). False si la pregunta no
+    /// existe o ya estaba respondida.
+    pub fn answer_question(
+        &mut self,
+        question_id: u64,
+        answer: &str,
+        lesson_id: u64,
+        receipt_id: Option<String>,
+    ) -> bool {
+        for q in self.questions.iter_mut() {
+            if q.id == question_id {
+                if q.status != crate::meta_curiosity::QStatus::Open {
+                    return false;
+                }
+                q.status = crate::meta_curiosity::QStatus::Answered;
+                q.answer = Some(answer.to_string());
+                q.lesson_id = Some(lesson_id);
+                q.receipt_id = receipt_id;
+                self.persist_snapshot();
+                return true;
+            }
+        }
+        false
     }
 
     /// set_w_content (Capa 3 evolve): aplicar un W validado por replay.

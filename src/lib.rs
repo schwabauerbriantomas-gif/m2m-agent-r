@@ -46,6 +46,8 @@ pub mod receipts;
 pub mod meta;
 /// RSI Capa 3: evolución acotada de parámetros (STOP/AlphaEvolve viable).
 pub mod meta_evolve;
+/// RSI curiosidad guiada: preguntas autónomas en puntos críticos.
+pub mod meta_curiosity;
 
 pub mod cluster;
 pub mod api;
