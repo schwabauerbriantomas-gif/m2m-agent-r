@@ -373,6 +373,9 @@ struct StateSnapshot {
     insights: Vec<PlainInsightRecord>,
     #[serde(default)]
     skills: Vec<PlainSkillRecord>,
+    /// STaR receipts ya quemados (v1-compat).
+    #[serde(default)]
+    promoted_receipts: Vec<String>,
 }
 
 /// Versión serializable de InsightRecord / SkillRecord (operation String).
@@ -572,6 +575,11 @@ pub struct AgentR {
     /// Insights (ExpeL) y skills (Voyager) — mismo snapshot, v1-compat.
     pub insights: Vec<InsightRecord>,
     pub skills: Vec<SkillRecord>,
+    /// STaR burn-on-promote (fix ronda 2): receipt ids que YA promovieron W.
+    /// Un receipt promociona UNA sola vez — sin esto, re-verificar el mismo
+    /// receipt válido N veces infla W al cap (vector destapado por el fuzzing
+    /// del swarm: 50 re-uses → W 3.0→6.0).
+    pub promoted_receipts: std::collections::HashSet<String>,
     /// Self-tuning (15-oct): peso de la señal de contenido del preflight
     /// híbrido, ajustable por feedback de outcomes reales. Fábrica 3.0
     /// (bench 15-oct). Persistido en el snapshot si está presente.
@@ -690,6 +698,7 @@ impl AgentR {
             successes: Vec::new(),
             insights: Vec::new(),
             skills: Vec::new(),
+            promoted_receipts: std::collections::HashSet::new(),
             next_id: 1,
             w_content: 3.0,
             tuning_hits: 0,
@@ -746,6 +755,7 @@ impl AgentR {
             successes: Vec::new(),
             insights: Vec::new(),
             skills: Vec::new(),
+            promoted_receipts: std::collections::HashSet::new(),
             next_id: 1,
             w_content: 3.0,
             tuning_hits: 0,
@@ -935,6 +945,7 @@ impl AgentR {
                 times_used: s.times_used,
                 deprecated: s.deprecated,
             }).collect(),
+            promoted_receipts: self.promoted_receipts.iter().cloned().collect(),
         })
     }
 
@@ -1004,6 +1015,7 @@ impl AgentR {
             times_used: s.times_used,
             deprecated: s.deprecated,
         }).collect();
+        self.promoted_receipts = snap.promoted_receipts.into_iter().collect();
         self.rebuild_recurrence_index();
         self.rebuild_fingerprint_index();
         Ok(self.errors.len())
@@ -1871,10 +1883,22 @@ impl AgentR {
                 let verified = receipt_id
                     .map(|rid| store.verify_receipt(rid).valid)
                     .unwrap_or(false);
-                if verified {
+                // Burn-on-promote: el receipt debe ser válido Y no haber
+                // promovido antes (un receipt = una promoción).
+                let fresh = receipt_id
+                    .map(|rid| !self.promoted_receipts.contains(rid))
+                    .unwrap_or(false);
+                if verified && fresh {
+                    if let Some(rid) = receipt_id {
+                        self.promoted_receipts.insert(rid.to_string());
+                    }
                     self.w_content = (self.w_content * 1.05).min(6.0);
                     self.tuning_hits += 1;
                     ("hit", self.w_content, true)
+                } else if verified {
+                    // receipt válido pero YA quemado: reconocido, no promociona
+                    self.tuning_hits += 1;
+                    ("hit_unpromoted", self.w_content, false)
                 } else {
                     // hit sin evidencia: reconocido pero NO promociona (STaR gate)
                     self.tuning_hits += 1;
@@ -4046,6 +4070,47 @@ mod rsi_capa2_tests {
         let (_, w4, _) = a.tuning_feedback_star(Some(7), None, &store, rid.as_deref());
         assert!(w4 < w2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_star_burn_on_promote_un_solo_uso_por_receipt() {
+        // Regresión del vector destapado por el fuzzing del swarm (T2 ronda 2):
+        // 50 re-uses del mismo receipt válido inflaban W 3.0→6.0.
+        use crate::receipts::ReceiptStore;
+        let mut a = AgentR::new_ephemeral();
+        let dir = std::env::temp_dir().join(format!("rsi_burn_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ReceiptStore::open_no_env(&dir).unwrap();
+        let rid = store.issue(&serde_json::json!({"outcome": "hit"})).map(|r| r.id).ok();
+
+        // 1er uso: promociona (W sube)
+        let (o1, w1, p1) = a.tuning_feedback_star(Some(3), Some(3), &store, rid.as_deref());
+        assert_eq!(o1, "hit"); assert!(p1);
+        let w0 = 3.0_f64;
+        assert!(w1 > w0);
+        // 49 re-uses del MISMO receipt: NUNCA más promociona
+        for _ in 0..49 {
+            let (o, w, p) = a.tuning_feedback_star(Some(3), Some(3), &store, rid.as_deref());
+            assert_eq!(o, "hit_unpromoted", "receipt quemado no vuelve a promover");
+            assert!(!p);
+            assert_eq!(w, w1, "W congelado tras el burn");
+        }
+        // Otro receipt legítimo SÍ promociona (el burn es por-id, no global)
+        let rid2 = store.issue(&serde_json::json!({"outcome": "hit2"})).map(|r| r.id).ok();
+        let (o2, w2, p2) = a.tuning_feedback_star(Some(3), Some(3), &store, rid2.as_deref());
+        assert_eq!(o2, "hit"); assert!(p2); assert!(w2 > w1);
+        // Roundtrip: los quemados persisten
+        let dir2 = std::env::temp_dir().join(format!("rsi_burn_rt_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir2);
+        std::fs::create_dir_all(&dir2).unwrap();
+        let path = dir2.join("state.json");
+        a.backup_state_to(&path).unwrap();
+        let b = AgentR::with_state_path(path);
+        assert!(b.promoted_receipts.contains(rid.as_deref().unwrap()));
+        assert_eq!(b.promoted_receipts.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&dir2);
     }
 
     #[test]
