@@ -575,10 +575,12 @@ impl AgentR {
                             sp.display(),
                             e
                         );
-                        agent.load_seeds();
+                        if !agent.no_seed() {
+                            agent.load_seeds();
+                        }
                     }
                 }
-            } else {
+            } else if !agent.no_seed() {
                 agent.load_seeds();
             }
         }
@@ -1392,6 +1394,13 @@ impl AgentR {
     /// Contadores del loop (para /status y para detectar deriva).
     pub fn tuning_stats(&self) -> (u64, u64, f64) {
         (self.tuning_hits, self.tuning_misses, self.w_content)
+    }
+
+    /// Seeds desactivados (AGENT_R_NO_SEED=1): memoria vacía de fábrica para
+    /// dominios nuevos — las 3 semillas históricas de M2M no aplican y un veto
+    /// heredado en un estado limpio confunde (visto en el smoke del CLI).
+    pub fn no_seed(&self) -> bool {
+        std::env::var("AGENT_R_NO_SEED").map(|v| v == "1").unwrap_or(false)
     }
 
     /// Variante con W_content configurable (auto-tuning: un loop de feedback
