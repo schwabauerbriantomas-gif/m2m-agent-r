@@ -44,6 +44,8 @@ pub mod receipts;
 /// RSI Capa 2: crítico LLM (glm-5.3-flash) envuelto en la lib.
 /// Feature "critic" = llamada real; sin ella, stub Unavailable.
 pub mod meta;
+/// RSI Capa 3: evolución acotada de parámetros (STOP/AlphaEvolve viable).
+pub mod meta_evolve;
 
 pub mod cluster;
 pub mod api;

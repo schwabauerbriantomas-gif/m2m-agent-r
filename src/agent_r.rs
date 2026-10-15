@@ -1719,6 +1719,25 @@ impl AgentR {
         created
     }
 
+    /// Path del snapshot (None en RAM-only). Para evolve/rollback.
+    pub fn state_path_opt(&self) -> Option<&std::path::PathBuf> {
+        self.state_path.as_ref()
+    }
+
+    /// set_w_content (Capa 3 evolve): aplicar un W validado por replay.
+    pub fn set_w_content(&mut self, w: f64) {
+        self.w_content = w.clamp(0.5, 6.0);
+        self.persist_snapshot();
+    }
+
+    /// Backup del snapshot a otro path (evolve N3-rollback). Devuelve el
+    /// número de errores escritos para verificar el backup no vacío.
+    pub fn backup_state_to(&self, path: &std::path::Path) -> Result<usize, String> {
+        let json = self.snapshot_json().map_err(|e| e.to_string())?;
+        std::fs::write(path, json).map_err(|e| e.to_string())?;
+        Ok(self.errors.len())
+    }
+
     fn schedule_flush_compat(&mut self) {
         self.persist_snapshot();
     }
