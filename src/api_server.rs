@@ -786,6 +786,84 @@ async fn agent_r_stats(
     Ok(Json(agent.stats().clone()))
 }
 
+// ============================================================================
+// Receipts HMAC (rediseño v2, Pendiente 1 — N3). Handlers NUEVOS de P1:
+// el ReceiptStore es file-backed e independiente del AppState, así que vive
+// en un OnceLock global (dir según AGENT_R_RECEIPTS_DIR o default
+// data/receipts). Los tests de endpoints lo apuntan a un tmpdir via env.
+// ============================================================================
+
+static RECEIPTS: std::sync::OnceLock<std::sync::Arc<crate::receipts::ReceiptStore>> =
+    std::sync::OnceLock::new();
+
+fn receipts_store() -> std::sync::Arc<crate::receipts::ReceiptStore> {
+    RECEIPTS
+        .get_or_init(|| {
+            let dir = std::env::var("AGENT_R_RECEIPTS_DIR")
+                .ok()
+                .filter(|d| !d.is_empty())
+                .unwrap_or_else(|| crate::receipts::DEFAULT_RECEIPTS_DIR.to_string());
+            match crate::receipts::ReceiptStore::open(&dir) {
+                Ok(s) => std::sync::Arc::new(s),
+                // Sin disco disponible no caemos: receipts efímeros en RAM
+                // (dir temporal). La clave sigue sin loggearse.
+                Err(_) => {
+                    let tmp = std::env::temp_dir().join(format!("receipts_ram_{}", std::process::id()));
+                    std::sync::Arc::new(
+                        crate::receipts::ReceiptStore::open(&tmp)
+                            .expect("receipts en tmp debe poder abrirse"),
+                    )
+                }
+            }
+        })
+        .clone()
+}
+
+#[derive(Deserialize)]
+struct ReceiptsIssueRequest {
+    payload: serde_json::Value,
+}
+
+async fn receipts_issue(
+    Json(req): Json<ReceiptsIssueRequest>,
+) -> Result<Json<crate::receipts::Receipt>, (StatusCode, String)> {
+    let store = receipts_store();
+    store
+        .issue(&req.payload)
+        .map(Json)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+#[derive(Deserialize)]
+struct ReceiptsVerifyRequest {
+    receipt_id: String,
+    #[serde(default)]
+    claim: Option<serde_json::Value>,
+}
+
+async fn receipts_verify(
+    Json(req): Json<ReceiptsVerifyRequest>,
+) -> Result<Json<crate::receipts::VerifyResult>, (StatusCode, String)> {
+    let store = receipts_store();
+    let result = match &req.claim {
+        Some(claim) => store.verify_claim(&req.receipt_id, claim),
+        None => store.verify_receipt(&req.receipt_id),
+    };
+    Ok(Json(result))
+}
+
+/// Flush de snapshots Agent-R (ruta agregada por P1 para el debounce de P2;
+/// el handler delega en AgentR::flush que hoy es write-through inmediato).
+async fn agent_r_flush(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    let agent = state.agent_r.lock().await;
+    match agent.flush() {
+        Ok(()) => Ok(Json(serde_json::json!({"flushed": true}))),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e)),
+    }
+}
+
 pub async fn run_server(port: u16) -> anyhow::Result<()> {
     let config = M2MConfig::default();
     let store = SplatStore::new(config);
@@ -822,6 +900,9 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-r/flush", post(agent_r_flush))
         .route("/agent-r/validate", post(validate_output))
         .route("/agent-r/stats", get(agent_r_stats))
+        .route("/agent-r/receipts/issue", post(receipts_issue))
+        .route("/agent-r/receipts/verify", post(receipts_verify))
+        .route("/agent-r/flush", post(agent_r_flush))
         .route("/agent-swarm/register", post(swarm_register))
         .route("/agent-swarm/heartbeat", post(swarm_heartbeat))
         .route("/agent-swarm/tasks", post(swarm_submit_task))
@@ -846,4 +927,83 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
     println!("M2M server listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     Ok(axum::serve(listener, app).await?)
+}
+
+#[cfg(test)]
+mod receipts_endpoint_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// HTTP/1.1 POST crudo sobre TcpStream (sin deps extra) -> body del response.
+    async fn http_post(port: u16, path: &str, body: &str) -> String {
+        let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+            .await
+            .expect("conectar al server de test");
+        let req = format!(
+            "POST {} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            path,
+            body.len(),
+            body
+        );
+        stream.write_all(req.as_bytes()).await.unwrap();
+        let mut raw = String::new();
+        stream.read_to_string(&mut raw).await.unwrap();
+        raw.split("\r\n\r\n").nth(1).unwrap_or("").to_string()
+    }
+
+    #[tokio::test]
+    async fn test_receipts_issue_verify_endpoints() {
+        // Dir propio para el OnceLock del store (primer uso en este proceso).
+        let dir = std::env::temp_dir().join(format!("receipts_ep_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("AGENT_R_RECEIPTS_DIR", &dir);
+
+        // Router SOLO con las rutas nuevas de P1 (in-process, puerto asignado P1).
+        let app = Router::new()
+            .route("/agent-r/receipts/issue", post(receipts_issue))
+            .route("/agent-r/receipts/verify", post(receipts_verify));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:18555").await.unwrap();
+        let srv = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        // 1) issue
+        let body = r#"{"payload":{"cmd":"echo hi","output":{"exit_code":0},"exit_code":0}}"#;
+        let resp = http_post(18555, "/agent-r/receipts/issue", body).await;
+        let v: serde_json::Value = serde_json::from_str(&resp).expect("issue responde JSON");
+        let rid = v["id"].as_str().expect("id en receipt").to_string();
+        assert!(v["sig_hex"].as_str().unwrap().len() == 64);
+        assert!(dir.join(".key").exists(), "clave persistida en el dir de test");
+
+        // 2) verify con claim correcto (exit_code=0 está en el payload firmado)
+        let ok_body = format!(
+            r#"{{"receipt_id":"{}","claim":{{"metric":"exit_code","value":0}}}}"#,
+            rid
+        );
+        let resp2 = http_post(18555, "/agent-r/receipts/verify", &ok_body).await;
+        assert!(resp2.contains("\"valid\":true"), "verify ok: {}", resp2);
+
+        // 3) verify con claim FALSO (exit_code=1 no está) → invalid
+        let bad_body = format!(
+            r#"{{"receipt_id":"{}","claim":{{"metric":"exit_code","value":1}}}}"#,
+            rid
+        );
+        let resp3 = http_post(18555, "/agent-r/receipts/verify", &bad_body).await;
+        assert!(resp3.contains("\"valid\":false"), "claim falso: {}", resp3);
+
+        // 4) verify de receipt inexistente → invalid
+        let none_body = r#"{"receipt_id":"rcpt_nope_0","claim":{"metric":"x","value":1}}"#;
+        let resp4 = http_post(18555, "/agent-r/receipts/verify", none_body).await;
+        assert!(resp4.contains("\"valid\":false"), "ausente: {}", resp4);
+
+        // 5) n3_check vía store (contrato del integrador) sobre el mismo receipt
+        let store = crate::receipts::ReceiptStore::open(&dir).unwrap();
+        assert_eq!(
+            store.n3_check(&serde_json::json!({
+                "receipt_id": rid,
+                "claim": {"metric": "exit_code", "value": 0}
+            })),
+            crate::receipts::N3Verdict::Pass
+        );
+
+        srv.abort();
+    }
 }
