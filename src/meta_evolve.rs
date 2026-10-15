@@ -93,6 +93,29 @@ where
     let mut grid: Vec<ReplayScore> = Vec::new();
     let mut receipts: Vec<String> = Vec::new();
 
+    // El incumbent SIEMPRE entra al replay: si su W no está en el grid, se
+    // mide aparte (si no, incumbent_score=-inf y cualquier candidato promueve
+    // "gratis" — bug encontrado por la muestra del swarm con W=3.103).
+    let incumbent_w = agent.tuning_stats().2;
+    let incumbent_measured = space
+        .w_values
+        .iter()
+        .any(|w| (w - incumbent_w).abs() < 1e-9);
+    if !incumbent_measured {
+        let s = evaluate(agent, incumbent_w);
+        let receipt = store
+            .issue(&json!({
+                "kind": "evolve_incumbent",
+                "w": s.w, "score": s.score, "tiebreak": s.tiebreak, "n": s.n,
+            }))
+            .map(|r| r.id)
+            .ok();
+        if let Some(r) = receipt {
+            receipts.push(r);
+        }
+        grid.push(s);
+    }
+
     for &w in &space.w_values {
         let score = evaluate(agent, w);
         let receipt = store
@@ -118,7 +141,10 @@ where
         .filter(|s| (s.w - incumbent_w).abs() < 1e-9)
         .map(|s| s.score)
         .next()
-        .unwrap_or(f64::NEG_INFINITY);
+        .unwrap_or_else(|| {
+            // Respaldo: con el incumbent medido arriba nunca debería pasar.
+            grid.iter().map(|s| s.score).fold(f64::MIN, f64::min)
+        });
 
     let best = grid
         .iter()
@@ -195,6 +221,30 @@ mod tests {
         assert!(report.promoted, "1.0 supera 3.0 por 15 >= 0.5");
         assert_eq!(a.tuning_stats().2, 1.0, "W aplicado");
         assert_eq!(report.receipts.len(), 3, "un receipt por candidato");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_evolve_incumbent_fuera_del_grid_se_mide() {
+        use crate::receipts::ReceiptStore;
+        let dir = std::env::temp_dir().join(format!("rsi_evolve3_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ReceiptStore::open_no_env(&dir).unwrap();
+        let mut a = AgentR::new_ephemeral();
+        a.set_w_content(3.103); // W del swarm real: NO está en el grid 0.5..4.0
+
+        let space = EvolveSpace { w_values: vec![3.0, 3.5, 4.0] };
+        // Evaluator: score = 2 hits para cualquier W (empate con el incumbent
+        // que también daría 2). Con el bug viejo: incumbent_score=-inf =>
+        // promovía "gratis". Con el fix: empate => NO promociona (sin margen).
+        let report = evolve(&mut a, &store, &space, |_agent, w| {
+            ReplayScore { w, score: 2.0, tiebreak: 0.0, n: 3 }
+        }, 0.5);
+        assert!(!report.promoted, "empate total no promociona");
+        assert_eq!(report.incumbent_score, 2.0, "incumbent medido (no -inf)");
+        assert_eq!(a.tuning_stats().2, 3.103, "W del incumbent conservado");
+        assert_eq!(report.receipts.len(), 4, "3 grid + 1 incumbent");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
