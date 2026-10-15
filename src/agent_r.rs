@@ -110,6 +110,54 @@ pub struct ErrorRecord {
     /// Reason for deprecation, if deprecated.
     #[serde(default)]
     pub deprecation_reason: Option<String>,
+    /// Reflexion/STaR (RSI Capa 2): lección racionalizada de CÓMO se arregló
+    /// (la traza del fix), distinta de `prevention` (qué evitar). La escribe
+    /// el executor tras verificar la reparación — no self-report sin receipt.
+    #[serde(default)]
+    pub lesson: Option<String>,
+}
+
+/// Tipo de registro de conocimiento (RSI Capa 2): el snapshot único guarda
+/// errores (lecciones de fallo), INSIGHTS (ExpeL: generalizaciones deduped)
+/// y SKILLS (Voyager: procedimientos/código reutilizable verificado).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RecordKind {
+    Insight,
+    Skill,
+}
+
+/// ExpeL consolidate_insights: generalización derivada de varias lecciones.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InsightRecord {
+    pub id: u64,
+    pub timestamp: f64,
+    pub operation: InternedId,
+    /// La generalización (qué patrón cross-task se observó).
+    pub insight: Box<str>,
+    /// Lecciones (error ids) que la soportan — trazabilidad al GT.
+    pub derived_from: Vec<u64>,
+    /// Veces que el insight fue útil (confirmado post-hoc, no self-report).
+    pub confirmations: u32,
+    #[serde(default)]
+    pub deprecated: bool,
+}
+
+/// Voyager skill-library: procedimiento reutilizable con steps concretos.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillRecord {
+    pub id: u64,
+    pub timestamp: f64,
+    pub operation: InternedId,
+    pub name: Box<str>,
+    /// Procedimiento/código (los "steps" del skill).
+    pub body: Box<str>,
+    /// Receipt del run que lo verificó (N2 ejecutado, no self-report).
+    #[serde(default)]
+    pub receipt_id: Option<String>,
+    /// Veces reutilizado con éxito.
+    pub times_used: u32,
+    #[serde(default)]
+    pub deprecated: bool,
 }
 
 /// Outcome of an error write under Mem0-style ADD/UPDATE/NOOP semantics. (OPT-O4)
@@ -320,6 +368,41 @@ struct StateSnapshot {
     /// Memoria de éxitos (R03 Capa 1): v1-compat (vacía si no está).
     #[serde(default)]
     successes: Vec<PlainSuccessRecord>,
+    /// Insights/skills (Capa 2): v1-compat.
+    #[serde(default)]
+    insights: Vec<PlainInsightRecord>,
+    #[serde(default)]
+    skills: Vec<PlainSkillRecord>,
+}
+
+/// Versión serializable de InsightRecord / SkillRecord (operation String).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlainInsightRecord {
+    pub id: u64,
+    pub timestamp: f64,
+    pub operation: String,
+    pub insight: String,
+    #[serde(default)]
+    pub derived_from: Vec<u64>,
+    #[serde(default)]
+    pub confirmations: u32,
+    #[serde(default)]
+    pub deprecated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlainSkillRecord {
+    pub id: u64,
+    pub timestamp: f64,
+    pub operation: String,
+    pub name: String,
+    pub body: String,
+    #[serde(default)]
+    pub receipt_id: Option<String>,
+    #[serde(default)]
+    pub times_used: u32,
+    #[serde(default)]
+    pub deprecated: bool,
 }
 
 /// Versión serializable de SuccessRecord (operation como String, como PlainRecord).
@@ -398,6 +481,17 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// desviación documentada: se guarda el hash u64, no el String — 8 B vs ~124
 /// B por registro; colisión de cumpleaños a 2M entradas ~1e-7, y un hit de
 /// dedup falso solo fusionaría dos incidentes idénticos en la práctica).
+/// FNV-1a de texto libre (insights/skills dedup).
+fn hash_fingerprint_text(text: &str) -> u64 {
+    let norm: String = text.to_lowercase().chars().filter(|c| !c.is_whitespace() || *c == ' ').collect();
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in norm.trim().as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
 fn hash_fingerprint(category: ErrorCategory, operation: &str, what: &str) -> u64 {
     fnv1a(error_fingerprint(category, operation, what).as_bytes())
 }
@@ -435,6 +529,9 @@ struct PlainRecord {
     deprecated: bool,
     #[serde(default)]
     deprecation_reason: Option<String>,
+    /// Reflexion/STaR (Capa 2): v1-compat.
+    #[serde(default)]
+    lesson: Option<String>,
 }
 
 /// Agent-R: Self-correcting agent with reflective error memory.
@@ -464,6 +561,9 @@ pub struct AgentR {
     next_id: u64,
     /// Memoria de éxitos (R03 Capa 1): separada de la de errores.
     successes: Vec<SuccessRecord>,
+    /// Insights (ExpeL) y skills (Voyager) — mismo snapshot, v1-compat.
+    pub insights: Vec<InsightRecord>,
+    pub skills: Vec<SkillRecord>,
     /// Self-tuning (15-oct): peso de la señal de contenido del preflight
     /// híbrido, ajustable por feedback de outcomes reales. Fábrica 3.0
     /// (bench 15-oct). Persistido en el snapshot si está presente.
@@ -580,6 +680,8 @@ impl AgentR {
         let mut agent = Self {
             errors: VecDeque::new(),
             successes: Vec::new(),
+            insights: Vec::new(),
+            skills: Vec::new(),
             next_id: 1,
             w_content: 3.0,
             tuning_hits: 0,
@@ -634,6 +736,8 @@ impl AgentR {
         Self {
             errors: VecDeque::new(),
             successes: Vec::new(),
+            insights: Vec::new(),
+            skills: Vec::new(),
             next_id: 1,
             w_content: 3.0,
             tuning_hits: 0,
@@ -785,6 +889,7 @@ impl AgentR {
                 last_seen: e.last_seen,
                 deprecated: e.deprecated,
                 deprecation_reason: e.deprecation_reason.clone(),
+                lesson: e.lesson.clone(),
             })
             .collect();
         serde_json::to_string(&StateSnapshot {
@@ -802,6 +907,25 @@ impl AgentR {
                 operation: self.resolve(s.operation).to_string(),
                 result: s.result.to_string(),
                 receipt_id: s.receipt_id.clone(),
+            }).collect(),
+            insights: self.insights.iter().map(|i| PlainInsightRecord {
+                id: i.id,
+                timestamp: i.timestamp,
+                operation: self.resolve(i.operation).to_string(),
+                insight: i.insight.to_string(),
+                derived_from: i.derived_from.clone(),
+                confirmations: i.confirmations,
+                deprecated: i.deprecated,
+            }).collect(),
+            skills: self.skills.iter().map(|s| PlainSkillRecord {
+                id: s.id,
+                timestamp: s.timestamp,
+                operation: self.resolve(s.operation).to_string(),
+                name: s.name.to_string(),
+                body: s.body.to_string(),
+                receipt_id: s.receipt_id.clone(),
+                times_used: s.times_used,
+                deprecated: s.deprecated,
             }).collect(),
         })
     }
@@ -851,6 +975,26 @@ impl AgentR {
             operation: self.intern(&s.operation),
             result: s.result.into_boxed_str(),
             receipt_id: s.receipt_id,
+        }).collect();
+        // Insights/skills (Capa 2): mismo tratamiento v1-compat.
+        self.insights = snap.insights.into_iter().map(|i| InsightRecord {
+            id: i.id,
+            timestamp: i.timestamp,
+            operation: self.intern(&i.operation),
+            insight: i.insight.into_boxed_str(),
+            derived_from: i.derived_from,
+            confirmations: i.confirmations,
+            deprecated: i.deprecated,
+        }).collect();
+        self.skills = snap.skills.into_iter().map(|s| SkillRecord {
+            id: s.id,
+            timestamp: s.timestamp,
+            operation: self.intern(&s.operation),
+            name: s.name.into_boxed_str(),
+            body: s.body.into_boxed_str(),
+            receipt_id: s.receipt_id,
+            times_used: s.times_used,
+            deprecated: s.deprecated,
         }).collect();
         self.rebuild_recurrence_index();
         self.rebuild_fingerprint_index();
@@ -915,6 +1059,7 @@ impl AgentR {
             last_seen: r.last_seen,
             deprecated: r.deprecated,
             deprecation_reason: r.deprecation_reason,
+            lesson: r.lesson,
         }
     }
 
@@ -1115,6 +1260,7 @@ impl AgentR {
             last_seen: now,
             deprecated: false,
             deprecation_reason: None,
+            lesson: None,
         };
 
         self.stats.total_errors_recorded += 1;
@@ -1423,6 +1569,116 @@ impl AgentR {
     /// - (Some, None) → miss: se predijo y el outcome mostró que la regla NO
     ///   aplicaba (ej. task completó sin tropezar con ella).
     /// Devuelve (outcome, w_nuevo).
+    /// Reflexion/STaR (Capa 2): racionalizar la lección del fix VERIFICADO.
+    /// `lesson` = cómo se arregló (traza), se guarda en el error original.
+    /// Opcionalmente devuelve receipt si `receipt_id` acompaña al fix.
+    pub fn set_lesson(&mut self, error_id: u64, lesson: &str, receipt_id: Option<String>) -> bool {
+        for e in self.errors.iter_mut() {
+            if e.id == error_id {
+                e.lesson = Some(lesson.to_string());
+                break;
+            }
+        }
+        // (receipt_id hoy solo audita; el uso estricto llega con N3-wire del runner)
+        let _ = receipt_id;
+        self.schedule_flush_compat();
+        true
+    }
+
+    /// ExpeL: registrar/consolidar un insight derivado de lecciones existentes.
+    /// `derived_from` deben ser error ids reales (trazabilidad al GT).
+    pub fn record_insight(&mut self, operation: &str, insight: &str, derived_from: &[u64]) -> u64 {
+        // Dedup por fingerprint del texto (mismo patrón ADD/UPDATE/NOOP):
+        let fp = hash_fingerprint_text(insight);
+        for i in self.insights.iter_mut() {
+            if !i.deprecated && hash_fingerprint_text(&i.insight) == fp {
+                return i.id; // NOOP: insight ya existe
+            }
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let op_id = self.intern(operation);
+        self.insights.push(InsightRecord {
+            id,
+            timestamp: now_secs(),
+            operation: op_id,
+            insight: insight.to_string().into_boxed_str(),
+            derived_from: derived_from.to_vec(),
+            confirmations: 0,
+            deprecated: false,
+        });
+        self.schedule_flush_compat();
+        id
+    }
+
+    /// Confirmación post-hoc de un insight (solo con evidencia verificada).
+    pub fn confirm_insight(&mut self, insight_id: u64) -> bool {
+        for i in self.insights.iter_mut() {
+            if i.id == insight_id {
+                i.confirmations += 1;
+                self.schedule_flush_compat();
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Voyager: registrar un skill VERIFICADO (con receipt del run que lo
+    /// ejecutó con éxito; sin receipt => times_used arranca en 0 y NO entra
+    /// al recall de skills hasta su primera confirmación).
+    pub fn record_skill(&mut self, operation: &str, name: &str, body: &str, receipt_id: Option<String>) -> u64 {
+        let fp = hash_fingerprint_text(name);
+        for s in self.skills.iter_mut() {
+            if !s.deprecated && hash_fingerprint_text(&s.name) == fp {
+                return s.id; // NOOP: skill existente (actualizar body?)
+            }
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let op_id = self.intern(operation);
+        self.skills.push(SkillRecord {
+            id,
+            timestamp: now_secs(),
+            operation: op_id,
+            name: name.to_string().into_boxed_str(),
+            body: body.to_string().into_boxed_str(),
+            receipt_id,
+            times_used: 0,
+            deprecated: false,
+        });
+        self.schedule_flush_compat();
+        id
+    }
+
+    /// Recall de skills por operación (solo verificados o reutilizados).
+    pub fn recall_skills(&self, operation: &str) -> Vec<&SkillRecord> {
+        let op_id = self.string_pool_index.get(operation).copied();
+        self.skills
+            .iter()
+            .filter(|s| {
+                !s.deprecated
+                    && (s.receipt_id.is_some() || s.times_used > 0)
+                    && op_id.map_or(true, |op| s.operation == op)
+            })
+            .collect()
+    }
+
+    /// Marcar skill como reutilizado con éxito (post-hoc verificado).
+    pub fn mark_skill_used(&mut self, skill_id: u64) -> bool {
+        for s in self.skills.iter_mut() {
+            if s.id == skill_id {
+                s.times_used += 1;
+                self.schedule_flush_compat();
+                return true;
+            }
+        }
+        false
+    }
+
+    fn schedule_flush_compat(&mut self) {
+        self.persist_snapshot();
+    }
+
     /// Registrar un ÉXITO (R03 Capa 1): queda en la memoria de éxitos,
     /// NUNCA en la de errores (los éxitos grabados como errores diluían el
     /// recall del preflight). `receipt_id` respalda el outcome cuando hay
@@ -2463,6 +2719,7 @@ impl AgentR {
                 last_seen: e.last_seen,
                 deprecated: e.deprecated,
                 deprecation_reason: e.deprecation_reason.clone(),
+                lesson: e.lesson.clone(),
             })
             .collect();
         serde_json::to_string(&resolved)
@@ -3618,5 +3875,66 @@ mod tests {
         assert_eq!(agent.stats.unique_incidents, 2);
         // errors() devuelve slice contiguo aunque el deque haya rotado.
         assert_eq!(agent.errors().len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod rsi_capa2_tests {
+    use super::*;
+
+    #[test]
+    fn test_insight_dedup_y_confirmacion() {
+        let mut a = AgentR::new_ephemeral();
+        let id1 = a.record_insight("deploy_prod", "Siempre chequear el health endpoint antes del switch de tráfico", &[1, 2]);
+        let id2 = a.record_insight("deploy_prod", "Siempre chequear el health endpoint antes del switch de tráfico", &[3]);
+        assert_eq!(id1, id2, "insight duplicado = NOOP");
+        assert!(a.confirm_insight(id1));
+        assert_eq!(a.insights[0].confirmations, 1);
+        assert_eq!(a.insights[0].derived_from.len(), 2);
+    }
+
+    #[test]
+    fn test_skill_recall_solo_verificados() {
+        let mut a = AgentR::new_ephemeral();
+        let s1 = a.record_skill("deploy_prod", "blue_green_switch", "1. drain 2. switch 3. verify", Some("rcpt_x".into()));
+        let _s2 = a.record_skill("deploy_prod", "skill_sin_receipt", "pasos", None);
+        let recalled = a.recall_skills("deploy_prod");
+        assert_eq!(recalled.len(), 1, "sin receipt y sin uso => NO recall");
+        assert_eq!(recalled[0].id, s1);
+        assert!(a.mark_skill_used(s1));
+        let recalled2 = a.recall_skills("deploy_prod");
+        assert_eq!(recalled2[0].times_used, 1);
+    }
+
+    #[test]
+    fn test_lesson_reflexion_persiste() {
+        let mut a = AgentR::new_ephemeral();
+        let id = a.record_error(ErrorCategory::Timeout, ErrorSeverity::Error, "bench_run",
+            "timeout en fase 2", "gpu sync faltante", &["bench"], "");
+        assert!(a.set_lesson(id, "fix: sincronizar ctx antes de medir", Some("rcpt_fix1".into())));
+        assert_eq!(a.errors.iter().find(|e| e.id == id).unwrap().lesson.as_deref(), Some("fix: sincronizar ctx antes de medir"));
+    }
+
+    #[test]
+    fn test_insights_skills_snapshot_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("rsi_capa2_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("state.json");
+        {
+            let mut a = AgentR::with_state_path(path.clone());
+            let eid = a.record_error(ErrorCategory::OutputDrift, ErrorSeverity::Error, "scrape",
+                "conn reset", "rate limit", &["web"], "");
+            a.record_insight("scrape", "backoff exponencial ante 429", &[eid]);
+            let sid = a.record_skill("scrape", "politeness_backoff", "retry con backoff 1s→32s", Some("rcpt_ok".into()));
+            a.mark_skill_used(sid);
+            a.flush().expect("flush");
+        }
+        let b = AgentR::with_state_path(path);
+        assert_eq!(b.insights.len(), 1);
+        assert_eq!(b.insights[0].insight.as_ref(), "backoff exponencial ante 429");
+        assert_eq!(b.skills.len(), 1);
+        assert_eq!(b.skills[0].times_used, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
