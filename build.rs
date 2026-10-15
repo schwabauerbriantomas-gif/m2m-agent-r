@@ -51,6 +51,34 @@ fn main() {
             println!("cargo:rerun-if-changed=kernels/distance.cu");
             // Embed PTX path as env variable
             println!("cargo:rustc-env=M2M_PTX_PATH={}", ptx_output.display());
+
+            // Fused energy+gradient kernel (kernel_swarm A02). Mismo pipeline
+            // nvcc; si falla, el wrapper usa el PTX committeado en kernels/.
+            let egrad_src = "kernels/energy_gradient.cu";
+            let egrad_ptx = out_dir.join("energy_gradient.ptx");
+            let mut ecmd = Command::new(&nvcc);
+            ecmd.args([
+                "--ptx",
+                "--gpu-architecture=sm_86",
+                "--generate-code=arch=compute_86,code=[sm_86,compute_86]",
+                "-O3",
+                "--use_fast_math",
+                "--extra-device-vectorization",
+            ]);
+            if let Some(ref cl) = cl_exe {
+                ecmd.args(["-ccbin", cl]);
+            }
+            ecmd.args([
+                &format!("--output-file={}", egrad_ptx.display()),
+                egrad_src,
+            ]);
+            if ecmd.status().map(|s| s.success()).unwrap_or(false) {
+                println!("cargo:warning=[m2m] energy_gradient PTX: {}", egrad_ptx.display());
+                println!("cargo:rerun-if-changed=kernels/energy_gradient.cu");
+                println!("cargo:rustc-env=M2M_EGRAD_PTX_PATH={}", egrad_ptx.display());
+            } else {
+                println!("cargo:warning=[m2m] energy_gradient nvcc failed — wrapper falls back to committed kernels/energy_gradient.ptx");
+            }
         } else {
             println!("cargo:warning=[m2m] nvcc compilation failed — GPU kernels unavailable");
         }

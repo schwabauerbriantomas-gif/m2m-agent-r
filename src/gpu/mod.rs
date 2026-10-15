@@ -7,6 +7,11 @@
 #[cfg(feature = "cuda")]
 pub mod cuda_kernel;
 
+/// Fused energy+gradient kernel (integrado del kernel_swarm A02).
+/// CPU fallback siempre disponible en `crate::ebm::energy_api`.
+#[cfg(feature = "cuda")]
+pub mod energy_gradient;
+
 /// Check if CUDA is available at runtime.
 #[cfg(feature = "cuda")]
 pub fn is_cuda_available() -> bool {
