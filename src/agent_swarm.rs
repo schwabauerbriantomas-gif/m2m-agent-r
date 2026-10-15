@@ -488,21 +488,13 @@ impl AgentSwarm {
         // señaló una regla de error como top-1, esa señal fue un MISS (la
         // regla no aplicaba a esta ejecución). Sin regla señalada => no hay
         // predicción que evaluar (abstención implícita).
+        // R03 Capa 1: los éxitos van a la memoria de éxitos (no contaminan el
+        // recall del preflight). El MISS de la regla señalada se mantiene.
         let predicted = task.veto_rule.lock().unwrap().take();
         if let Some(pred) = predicted {
             agent_r.tuning_feedback(Some(pred), None);
         }
-        // Lección compartida: el resultado queda como lección de la operación
-        // en el Agent-R común (visible para el preflight de todos los agentes).
-        agent_r.record_error(
-            ErrorCategory::Other,
-            ErrorSeverity::Warning,
-            &task.operation,
-            result,
-            "swarm task completed",
-            &["swarm", "completed"],
-            "",
-        );
+        let _ = agent_r.record_success(&task.operation, result, None);
         true
     }
 
@@ -522,11 +514,20 @@ impl AgentSwarm {
             a.tasks_failed += 1;
             a.last_heartbeat = now_secs();
         }
-        // Self-tuning (15-oct): la task FALLÓ → la regla que el preflight del
-        // claim señaló era RELEVANTE (hit): la lección anticipó la falla.
+        // R03 Capa 1 — label POST-HOC: el hit se acredita solo si la evidencia
+        // del fallo (reason/stderr) CONFIRMA la regla señalada (match_outcome_
+        // rule), no por identidad. Si la evidencia confirma OTRA regla, esa
+        // recibe el hit; si no confirma ninguna, la señalada es un MISS.
         let predicted = task.veto_rule.lock().unwrap().take();
         if let Some(pred) = predicted {
-            agent_r.tuning_feedback(Some(pred), Some(pred));
+            let confirmed = agent_r.match_outcome_rule(&task.operation, reason);
+            // hit SOLO si la evidencia confirma EXACTAMENTE la regla señalada;
+            // si confirma otra regla o ninguna, la señalada es un MISS.
+            let outcome = match confirmed {
+                Some(actual) if actual == pred => (Some(pred), Some(actual)),
+                _ => (Some(pred), None),
+            };
+            agent_r.tuning_feedback(outcome.0, outcome.1);
         }
         agent_r.record_error(
             ErrorCategory::Timeout,

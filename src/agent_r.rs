@@ -317,6 +317,20 @@ struct StateSnapshot {
     tuning_hits: Option<u64>,
     #[serde(default)]
     tuning_misses: Option<u64>,
+    /// Memoria de éxitos (R03 Capa 1): v1-compat (vacía si no está).
+    #[serde(default)]
+    successes: Vec<PlainSuccessRecord>,
+}
+
+/// Versión serializable de SuccessRecord (operation como String, como PlainRecord).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlainSuccessRecord {
+    pub id: u64,
+    pub timestamp: f64,
+    pub operation: String,
+    pub result: String,
+    #[serde(default)]
+    pub receipt_id: Option<String>,
 }
 
 const MAX_ERRORS: usize = 2_000_000; // rambench-nocap: relevo el cap para medir la firma real (solo en este branch)
@@ -424,11 +438,32 @@ struct PlainRecord {
 }
 
 /// Agent-R: Self-correcting agent with reflective error memory.
+/// Memoria de éxitos (R03 Capa 1): los outcomes positivos NUNCA entran a la
+/// memoria de errores (contaminaban el recall que alimenta el preflight).
+/// Registro ligero: firma de la operación + resultado + receip opcional.
+/// Persistido en el snapshot (serde default = v1-compat).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuccessRecord {
+    /// Unique ID (misma secuencia que errors, monotónico).
+    pub id: u64,
+    pub timestamp: f64,
+    /// Operación internada en el pool del AgentR.
+    pub operation: InternedId,
+    /// Resultado declarado por el executor (no es self-report para veto:
+    /// los éxitos no alimentan reglas, solo consultas explícitas).
+    pub result: Box<str>,
+    /// Receipt HMAC opcional que respalda el éxito (futuro: obligatorio).
+    #[serde(default)]
+    pub receipt_id: Option<String>,
+}
+
 pub struct AgentR {
     /// Registros en orden de inserción. Deque: eviction O(1) amortizado
     /// (pendiente 2a; antes `Vec::remove(0)` era O(n) por purga).
     errors: VecDeque<ErrorRecord>,
     next_id: u64,
+    /// Memoria de éxitos (R03 Capa 1): separada de la de errores.
+    successes: Vec<SuccessRecord>,
     /// Self-tuning (15-oct): peso de la señal de contenido del preflight
     /// híbrido, ajustable por feedback de outcomes reales. Fábrica 3.0
     /// (bench 15-oct). Persistido en el snapshot si está presente.
@@ -544,6 +579,7 @@ impl AgentR {
     pub fn with_state_path(path: PathBuf) -> Self {
         let mut agent = Self {
             errors: VecDeque::new(),
+            successes: Vec::new(),
             next_id: 1,
             w_content: 3.0,
             tuning_hits: 0,
@@ -597,6 +633,7 @@ impl AgentR {
     pub fn new_ephemeral() -> Self {
         Self {
             errors: VecDeque::new(),
+            successes: Vec::new(),
             next_id: 1,
             w_content: 3.0,
             tuning_hits: 0,
@@ -759,6 +796,13 @@ impl AgentR {
             w_content: Some(self.w_content),
             tuning_hits: Some(self.tuning_hits),
             tuning_misses: Some(self.tuning_misses),
+            successes: self.successes.iter().map(|s| PlainSuccessRecord {
+                id: s.id,
+                timestamp: s.timestamp,
+                operation: self.resolve(s.operation).to_string(),
+                result: s.result.to_string(),
+                receipt_id: s.receipt_id.clone(),
+            }).collect(),
         })
     }
 
@@ -800,6 +844,14 @@ impl AgentR {
         }
         self.tuning_hits = snap.tuning_hits.unwrap_or(self.tuning_hits);
         self.tuning_misses = snap.tuning_misses.unwrap_or(self.tuning_misses);
+        // Memoria de éxitos (R03): re-internar contra el pool reconstruido.
+        self.successes = snap.successes.into_iter().map(|s| SuccessRecord {
+            id: s.id,
+            timestamp: s.timestamp,
+            operation: self.intern(&s.operation),
+            result: s.result.into_boxed_str(),
+            receipt_id: s.receipt_id,
+        }).collect();
         self.rebuild_recurrence_index();
         self.rebuild_fingerprint_index();
         Ok(self.errors.len())
@@ -1371,6 +1423,90 @@ impl AgentR {
     /// - (Some, None) → miss: se predijo y el outcome mostró que la regla NO
     ///   aplicaba (ej. task completó sin tropezar con ella).
     /// Devuelve (outcome, w_nuevo).
+    /// Registrar un ÉXITO (R03 Capa 1): queda en la memoria de éxitos,
+    /// NUNCA en la de errores (los éxitos grabados como errores diluían el
+    /// recall del preflight). `receipt_id` respalda el outcome cuando hay
+    /// executor que firma (futuro: obligatorio para promover reglas).
+    pub fn record_success(&mut self, operation: &str, result: &str, receipt_id: Option<String>) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        let op_id = self.intern(operation);
+        self.successes.push(SuccessRecord {
+            id,
+            timestamp: now_secs(),
+            operation: op_id,
+            result: result.to_string().into_boxed_str(),
+            receipt_id,
+        });
+        self.stats.total_errors_recorded += 1; // misma métrica de escrituras
+        self.persist_snapshot();
+        id
+    }
+
+    /// Éxitos de una operación (consultas explícitas; jamás entra al preflight).
+    pub fn recall_successes(&self, operation: &str) -> Vec<&SuccessRecord> {
+        let op_id = self.string_pool_index.get(operation).copied();
+        match op_id {
+            Some(id) => self.successes.iter().filter(|s| s.operation == id).collect(),
+            None => Vec::new(),
+        }
+    }
+
+    pub fn successes_count(&self) -> usize {
+        self.successes.len()
+    }
+
+    /// Matching post-hoc (R03 Capa 1, fix del hit-by-definition): dada la
+    /// EVIDENCIA del fallo (stderr/reason capturada), decidir qué regla de la
+    /// memoria fue realmente involucrada — reusa el scorer del preflight v2
+    /// pero ancla el matching al texto de la evidencia (overlap léxico con
+    /// what/why/prevention), no a la identidad con la predicción.
+    ///
+    /// Devuelve la regla top si supera el umbral de solape; None si el fallo
+    /// no confirma ninguna regla (=> la señalada por el preflight es un MISS,
+    /// no un hit automático).
+    pub fn match_outcome_rule(&mut self, operation: &str, evidence: &str) -> Option<u64> {
+        if evidence.trim().is_empty() {
+            return None; // sin evidencia no hay hit verificable
+        }
+        let ev: std::collections::HashSet<String> = evidence
+            .to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|t| t.len() >= 4) // palabras cortas = ruido
+            .map(|s| s.to_string())
+            .collect();
+        if ev.is_empty() {
+            return None;
+        }
+        let mut best: Option<(f64, u64)> = None;
+        for e in self.errors.iter().filter(|e| !e.deprecated) {
+            let e_op = self.resolve(e.operation);
+            if e_op != operation {
+                continue; // solo reglas de la MISMA operación (exact-match)
+            }
+            let text = format!("{} {} {}", e.what, e.why, e.prevention).to_lowercase();
+            let words: std::collections::HashSet<String> = text
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|t| t.len() >= 4)
+                .map(|s| s.to_string())
+                .collect();
+            if words.is_empty() {
+                continue;
+            }
+            let overlap = ev.intersection(&words).count() as f64;
+            let jaccard = overlap / (ev.len() as f64 + words.len() as f64 - overlap);
+            // Umbral conservador: al menos 2 términos compartidos Y jaccard
+            // no trivial (la evidencia mentiona la lección de verdad).
+            if overlap >= 2.0 && jaccard >= 0.08 {
+                let score = overlap * jaccard + e.recurrence as f64 * 0.1;
+                if best.map_or(true, |(bs, _)| score > bs) {
+                    best = Some((score, e.id));
+                }
+            }
+        }
+        best.map(|(_, id)| id)
+    }
+
     pub fn tuning_feedback(&mut self, predicted: Option<u64>, actual: Option<u64>) -> (&'static str, f64) {
         let outcome = match (predicted, actual) {
             (None, _) => "abstain",
@@ -2032,6 +2168,19 @@ impl AgentR {
         output: &serde_json::Value,
         evidence: Option<&serde_json::Value>,
     ) -> ValidationResultV2 {
+        self.validate_output_v2_full(operation, output, evidence, None)
+    }
+
+    /// Igual que `validate_output_v2_evidence` pero además cablea N3: si la
+    /// evidencia incluye `receipt_id`, el claim se verifica contra el store
+    /// (HMAC) — nivel N3 REAL, no stub. (R03 Capa 1.)
+    pub fn validate_output_v2_full(
+        &mut self,
+        operation: &str,
+        output: &serde_json::Value,
+        evidence: Option<&serde_json::Value>,
+        receipt_store: Option<&crate::receipts::ReceiptStore>,
+    ) -> ValidationResultV2 {
         let start = Instant::now();
         let mut checks_run = 0usize;
         let mut details: Vec<String> = Vec::new();
@@ -2148,8 +2297,28 @@ impl AgentR {
         // TODO(integration): wire receipts — llamar a
         // `receipts::n3_check(&claim)` del módulo de P1-receipts cuando esté
         // mergeado. Hasta entonces no hay oráculo criptográfico disponible.
-        let n3 = LevelVerdict::Unverifiable;
-        details.push("N3: receipts not wired yet (stub)".into());
+        // N3 WIRED (R03 Capa 1): receipt_id en la evidencia + store disponible
+        // => verificación HMAC real via n3_check. Sin store (CLI/tests RAM) o
+        // sin receipt_id => Unverifiable (nunca Fail).
+        let n3 = match (receipt_store, evidence.and_then(|e| e.get("receipt_id"))) {
+            (Some(store), Some(rid)) => {
+                checks_run += 1;
+                match store.n3_check(evidence.expect("evidence checked")) {
+                    crate::receipts::N3Verdict::Pass => {
+                        details.push(format!("N3: receipt {} verificado (HMAC OK)", rid.as_str().unwrap_or("?")));
+                        LevelVerdict::Pass
+                    }
+                    other => {
+                        details.push(format!("N3: receipt no verificable ({other:?})"));
+                        LevelVerdict::Unverifiable
+                    }
+                }
+            }
+            _ => {
+                details.push("N3: sin receipt_id o sin store (Unverifiable)".into());
+                LevelVerdict::Unverifiable
+            }
+        };
 
         // Custom validators (heredados del v1, corren como parte de N0 forma).
         checks_run += self.validators.len();
@@ -2168,11 +2337,18 @@ impl AgentR {
         };
         let levels = [n0, n1, n2, n3];
         let any_fail = levels.iter().any(|l| *l == LevelVerdict::Fail);
-        let any_pass = levels.iter().any(|l| *l == LevelVerdict::Pass);
+        // R03 Capa 1: un "pass" respaldado solo por forma (N0/N1) sin evidencia
+        // ni receipt es pass-NO-verificado: overall distingue para que ninguna
+        // promoción de regla use un pass sin N2/N3.
         let (overall, confidence) = if any_fail {
             ("fail".to_string(), 0.0)
-        } else if any_pass {
+        } else if n0 == LevelVerdict::Pass
+            && n1 == LevelVerdict::Pass
+            && (n2 == LevelVerdict::Pass || n3 == LevelVerdict::Pass)
+        {
             ("pass".to_string(), 1.0)
+        } else if n0 == LevelVerdict::Pass && n1 == LevelVerdict::Pass {
+            ("pass_unverified".to_string(), 0.5)
         } else {
             ("unverifiable".to_string(), 0.3)
         };
@@ -2976,7 +3152,10 @@ mod tests {
         assert_eq!(r.verdicts.n1_numeric_consistency, LevelVerdict::Pass,
             "strings con 'NaN'/'Infinity' NO son valores no-finitos");
         assert_ne!(r.overall, "fail");
-        assert!(r.valid);
+        // R03 Capa 1: sin evidencia N2/N3 => pass_unverified => valid=false
+        // (un pass de forma no autoriza promoción de reglas).
+        assert_eq!(r.overall, "pass_unverified");
+        assert!(!r.valid, "pass_unverified no cuenta como valid");
     }
 
     /// N1 SÍ debe detectar no-finitos reales... vía parse: serde_json no
@@ -3025,8 +3204,10 @@ mod tests {
         // Sin evidencia: unverifiable, no fail.
         let r = agent.validate_output_v2_evidence("op", &out, None);
         assert_eq!(r.verdicts.n2_caller_evidence, LevelVerdict::Unverifiable);
-        assert_eq!(r.overall, "pass", "N0/N1 con oráculo pasan => overall pass");
-        // (N2 unverifiable no hunde el overall cuando otros niveles pasan)
+        // R03 Capa 1: N0/N1 pasan pero sin evidencia => pass_unverified.
+        assert_eq!(r.overall, "pass_unverified",
+            "N0/N1 sin evidencia NO es pass verificado");
+        // (con evidencia N2 consistente sí es pass verificado — caso siguiente)
 
         // Evidencia consistente: pass.
         let ev_ok = serde_json::json!({"exit_code": 0, "stderr": "", "diff": ""});
@@ -3173,8 +3354,8 @@ mod tests {
         let r = agent.validate_output_v2("op", &serde_json::json!("plain text"));
         assert_eq!(r.verdicts.n2_caller_evidence, LevelVerdict::Unverifiable);
         assert_eq!(r.verdicts.n3_receipt, LevelVerdict::Unverifiable);
-        // overall: pass (N0/N1 estructurales pasan)
-        assert_eq!(r.overall, "pass");
+        // overall: pass_unverified (N0/N1 estructurales pasan, sin N2/N3)
+        assert_eq!(r.overall, "pass_unverified");
     }
 
     /// Preflight v2: veto solo con Critical + N>=2 + regla activa.
