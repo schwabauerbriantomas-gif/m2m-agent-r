@@ -309,6 +309,14 @@ struct StateSnapshot {
     next_id: u64,
     stats: AgentRStats,
     errors: Vec<PlainRecord>,
+    /// Self-tuning (15-oct): W del híbrido + contadores del feedback.
+    /// Opcionales para cargar snapshots v1 sin tocarlos (compat).
+    #[serde(default)]
+    w_content: Option<f64>,
+    #[serde(default)]
+    tuning_hits: Option<u64>,
+    #[serde(default)]
+    tuning_misses: Option<u64>,
 }
 
 const MAX_ERRORS: usize = 2_000_000; // rambench-nocap: relevo el cap para medir la firma real (solo en este branch)
@@ -421,6 +429,13 @@ pub struct AgentR {
     /// (pendiente 2a; antes `Vec::remove(0)` era O(n) por purga).
     errors: VecDeque<ErrorRecord>,
     next_id: u64,
+    /// Self-tuning (15-oct): peso de la señal de contenido del preflight
+    /// híbrido, ajustable por feedback de outcomes reales. Fábrica 3.0
+    /// (bench 15-oct). Persistido en el snapshot si está presente.
+    w_content: f64,
+    /// Contadores del loop de feedback (hits/misses de la regla top-1).
+    tuning_hits: u64,
+    tuning_misses: u64,
     /// String pool: ids de operaciones/tags internadas (dedup global).
     /// Workload real: ~15 ops + ~20 tags => pool acotado y mínimo.
     string_pool: Vec<Box<str>>,
@@ -530,6 +545,9 @@ impl AgentR {
         let mut agent = Self {
             errors: VecDeque::new(),
             next_id: 1,
+            w_content: 3.0,
+            tuning_hits: 0,
+            tuning_misses: 0,
             string_pool: Vec::new(),
             string_pool_index: HashMap::new(),
             recurrence_index: HashMap::new(),
@@ -578,6 +596,9 @@ impl AgentR {
         Self {
             errors: VecDeque::new(),
             next_id: 1,
+            w_content: 3.0,
+            tuning_hits: 0,
+            tuning_misses: 0,
             string_pool: Vec::new(),
             string_pool_index: HashMap::new(),
             recurrence_index: HashMap::new(),
@@ -733,6 +754,9 @@ impl AgentR {
             next_id: self.next_id,
             stats: self.stats.clone(),
             errors,
+            w_content: Some(self.w_content),
+            tuning_hits: Some(self.tuning_hits),
+            tuning_misses: Some(self.tuning_misses),
         })
     }
 
@@ -767,6 +791,13 @@ impl AgentR {
             self.errors.iter().map(|e| e.id).max().unwrap_or(0) + 1,
         );
         self.stats = snap.stats;
+        // Self-tuning: restaurar W y contadores si el snapshot los trae
+        // (snapshots v1 no los tienen => quedan los de fábrica).
+        if let Some(w) = snap.w_content {
+            self.w_content = w.clamp(0.5, 6.0);
+        }
+        self.tuning_hits = snap.tuning_hits.unwrap_or(self.tuning_hits);
+        self.tuning_misses = snap.tuning_misses.unwrap_or(self.tuning_misses);
         self.rebuild_recurrence_index();
         self.rebuild_fingerprint_index();
         Ok(self.errors.len())
@@ -1320,7 +1351,47 @@ impl AgentR {
         tags: &[&str],
         situation: &str,
     ) -> PreflightResultV2 {
-        self.preflight_v2_hybrid_w(operation, tags, situation, 3.0)
+        let w = self.w_content;
+        self.preflight_v2_hybrid_w(operation, tags, situation, w)
+    }
+
+    /// Peso vigente de la señal de contenido (self-tuning).
+    pub fn w_content(&self) -> f64 {
+        self.w_content
+    }
+
+    /// Feedback del loop de self-tuning: el outcome de una decisión donde el
+    /// híbrido señaló `predicted` como regla top-1.
+    /// - (None, _) → abstención: no había predicción que evaluar (sin cambio:
+    ///   castigarla destruye la exploración).
+    /// - (Some(p), Some(a)) p==a → hit (W×1.05, cap 6.0).
+    /// - (Some, Some) p!=a → miss (W×0.95, floor 0.5).
+    /// - (Some, None) → miss: se predijo y el outcome mostró que la regla NO
+    ///   aplicaba (ej. task completó sin tropezar con ella).
+    /// Devuelve (outcome, w_nuevo).
+    pub fn tuning_feedback(&mut self, predicted: Option<u64>, actual: Option<u64>) -> (&'static str, f64) {
+        let outcome = match (predicted, actual) {
+            (None, _) => "abstain",
+            (Some(p), Some(a)) if p == a => {
+                self.w_content = (self.w_content * 1.05).min(6.0);
+                self.tuning_hits += 1;
+                "hit"
+            }
+            (Some(_), _) => {
+                self.w_content *= 0.95;
+                if self.w_content < 0.5 {
+                    self.w_content = 0.5;
+                }
+                self.tuning_misses += 1;
+                "miss"
+            }
+        };
+        (outcome, self.w_content)
+    }
+
+    /// Contadores del loop (para /status y para detectar deriva).
+    pub fn tuning_stats(&self) -> (u64, u64, f64) {
+        (self.tuning_hits, self.tuning_misses, self.w_content)
     }
 
     /// Variante con W_content configurable (auto-tuning: un loop de feedback

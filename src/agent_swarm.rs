@@ -57,6 +57,10 @@ pub struct SwarmTask {
     state: std::sync::Arc<AtomicU8>,
     claim_epoch: std::sync::Arc<AtomicU64>,
     result: std::sync::Arc<Mutex<Option<String>>>,
+    /// Self-tuning: regla que el preflight híbrido señaló como top-1 al
+    /// momento de la decisión (claim). El outcome (complete/fail) la usa
+    /// como etiqueta para ajustar W_content (ver AGENT_R_TUNING en server).
+    pub veto_rule: std::sync::Arc<Mutex<Option<u64>>>,
 }
 
 const ST_PENDING: u8 = 0;
@@ -357,9 +361,34 @@ impl AgentSwarm {
                 state,
                 claim_epoch: std::sync::Arc::new(AtomicU64::new(0)),
                 result: std::sync::Arc::new(Mutex::new(None)),
+                veto_rule: std::sync::Arc::new(Mutex::new(None)),
             },
         );
         id
+    }
+
+    /// Setea la regla señalada por el preflight en el momento de la decisión
+    /// (claim del swarm). La consume el outcome para el self-tuning.
+    pub fn set_task_rule(&self, task_id: u64, rule: u64) -> bool {
+        match self.tasks.lock().unwrap().get(&task_id) {
+            Some(t) => {
+                *t.veto_rule.lock().unwrap() = Some(rule);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Regla señalada en el claim (None = no hubo preflight con regla).
+    pub fn task_rule(&self, task_id: u64) -> Option<u64> {
+        self.tasks
+            .lock()
+            .unwrap()
+            .get(&task_id)?
+            .veto_rule
+            .lock()
+            .unwrap()
+            .clone()
     }
 
     /// CLAIM lock-free: un solo CAS sobre el estado atómico de la tarea.
@@ -455,6 +484,14 @@ impl AgentSwarm {
             a.tasks_completed += 1;
             a.last_heartbeat = now_secs();
         }
+        // Self-tuning (15-oct): la task COMPLETÓ → si el preflight del claim
+        // señaló una regla de error como top-1, esa señal fue un MISS (la
+        // regla no aplicaba a esta ejecución). Sin regla señalada => no hay
+        // predicción que evaluar (abstención implícita).
+        let predicted = task.veto_rule.lock().unwrap().take();
+        if let Some(pred) = predicted {
+            agent_r.tuning_feedback(Some(pred), None);
+        }
         // Lección compartida: el resultado queda como lección de la operación
         // en el Agent-R común (visible para el preflight de todos los agentes).
         agent_r.record_error(
@@ -484,6 +521,12 @@ impl AgentSwarm {
         if let Some(a) = self.agents.lock().unwrap().get_mut(agent) {
             a.tasks_failed += 1;
             a.last_heartbeat = now_secs();
+        }
+        // Self-tuning (15-oct): la task FALLÓ → la regla que el preflight del
+        // claim señaló era RELEVANTE (hit): la lección anticipó la falla.
+        let predicted = task.veto_rule.lock().unwrap().take();
+        if let Some(pred) = predicted {
+            agent_r.tuning_feedback(Some(pred), Some(pred));
         }
         agent_r.record_error(
             ErrorCategory::Timeout,
@@ -653,6 +696,7 @@ impl AgentSwarm {
                 state: std::sync::Arc::new(AtomicU8::new(ST_READY)),
                 claim_epoch: std::sync::Arc::new(AtomicU64::new(0)),
                 result: std::sync::Arc::new(Mutex::new(None)),
+                veto_rule: std::sync::Arc::new(Mutex::new(None)),
             },
         );
         p.task_id = Some(tid);
@@ -732,6 +776,7 @@ impl AgentSwarm {
                 state: std::sync::Arc::new(AtomicU8::new(ST_READY)),
                 claim_epoch: std::sync::Arc::new(AtomicU64::new(n as u64)),
                 result: std::sync::Arc::new(Mutex::new(Some(n.to_string()))),
+                veto_rule: std::sync::Arc::new(Mutex::new(None)),
             },
         );
         id

@@ -432,6 +432,13 @@ struct SwarmPreflightRequest {
     operation: String,
     #[serde(default)]
     context_tags: Vec<String>,
+    /// Texto del estado actual (opcional): activa el híbrido y graba la
+    /// regla top-1 en la task para el self-tuning por outcome.
+    #[serde(default)]
+    situation: Option<String>,
+    /// Task del swarm ya sometida cuyo preflight es éste (grabar regla).
+    #[serde(default)]
+    task_id: Option<u64>,
 }
 
 async fn swarm_preflight(
@@ -440,7 +447,38 @@ async fn swarm_preflight(
 ) -> Json<serde_json::Value> {
     let mut agent_r = state.agent_r.lock().await;
     let tags: Vec<&str> = req.context_tags.iter().map(|s| s.as_str()).collect();
-    Json(state.swarm.preflight_shared(&mut agent_r, &req.operation, &tags))
+    let mut out = match &req.situation {
+        Some(s) if !s.trim().is_empty() => {
+            let mut r = agent_r.preflight_v2_hybrid(&req.operation, &tags, s);
+            serde_json::json!({
+                "proceed": r.proceed,
+                "relevant_errors": r.relevant_errors,
+                "warnings": r.warnings,
+                "precautions": r.precautions,
+                "top_rules": r.top_rules,
+                "suggestion": r.suggestion,
+                "veto_reason": r.veto_reason,
+                "hybrid": true,
+                "w_content": agent_r.w_content(),
+            })
+        }
+        _ => state.swarm.preflight_shared(&mut agent_r, &req.operation, &tags),
+    };
+    // Self-tuning: grabar la regla top-1 en la task para que el outcome
+    // (complete/fail) la use como etiqueta — SOLO si hay una regla real
+    // (score >= 10 = exact-match de operación; semillas/genericidad no
+    // cuentan como predicción).
+    if let Some(tid) = req.task_id {
+        let top = out.get("top_rules").and_then(|t| t.get(0));
+        let score_ok = top.and_then(|r| r.get("score")).and_then(|v| v.as_f64()).unwrap_or(0.0) >= 10.0;
+        if score_ok {
+            if let Some(rule) = top.and_then(|r| r.get("id")).and_then(|v| v.as_u64()) {
+                state.swarm.set_task_rule(tid, rule);
+                out["task_rule_recorded"] = serde_json::json!(rule);
+            }
+        }
+    }
+    Json(out)
 }
 
 async fn swarm_status(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -662,6 +700,49 @@ async fn preflight_check(
 }
 
 #[derive(Deserialize)]
+struct PreflightHybridRequest {
+    operation: String,
+    #[serde(default)]
+    context_tags: Vec<String>,
+    /// Estado actual del caller (obs/comando/stderr): activa la señal de
+    /// contenido (overlap binario IDF contra el `what` de las reglas).
+    situation: String,
+}
+
+/// Preflight HÍBRIDO (bench 15-oct): selección global estructural+contenido.
+/// Misma forma de respuesta que /agent-r/preflight + w_content vigente.
+async fn preflight_hybrid(
+    State(state): State<AppState>,
+    Json(req): Json<PreflightHybridRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let mut agent = state.agent_r.lock().await;
+    let tags: Vec<&str> = req.context_tags.iter().map(|s| s.as_str()).collect();
+    let result = agent.preflight_v2_hybrid(&req.operation, &tags, &req.situation);
+    Ok(Json(serde_json::json!({
+        "proceed": result.proceed,
+        "warnings": result.warnings,
+        "precautions": result.precautions,
+        "relevant_errors": result.relevant_errors,
+        "top_rules": result.top_rules,
+        "suggestion": result.suggestion,
+        "veto_reason": result.veto_reason,
+        "hybrid": true,
+        "w_content": agent.w_content(),
+        "tuning": { "hits": agent.tuning_stats().0, "misses": agent.tuning_stats().1 },
+    })))
+}
+
+/// Flush sincrónico del snapshot de Agent-R (apagado controlado de los
+/// agentes; el debounce escribe por su cuenta pero esto garantiza disco).
+async fn agent_r_flush(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let agent = state.agent_r.lock().await;
+    match agent.flush() {
+        Ok(()) => Json(serde_json::json!({"ok": true, "flushed": true})),
+        Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
+    }
+}
+
+#[derive(Deserialize)]
 struct ValidateOutputRequest {
     operation: String,
     output: serde_json::Value,
@@ -737,6 +818,8 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/rebuild-index", post(rebuild_index))
         .route("/agent-r/record-error", post(record_error))
         .route("/agent-r/preflight", post(preflight_check))
+        .route("/agent-r/preflight-hybrid", post(preflight_hybrid))
+        .route("/agent-r/flush", post(agent_r_flush))
         .route("/agent-r/validate", post(validate_output))
         .route("/agent-r/stats", get(agent_r_stats))
         .route("/agent-swarm/register", post(swarm_register))
