@@ -1438,6 +1438,31 @@ impl AgentR {
             rule_tokens.iter().find(|(rid, _)| *rid == id).map(|(_, t)| t)
         };
 
+        // Canal de fallback: tokens del `why` COMPLETO (la lección entera).
+        // GATEMAX (bench C2c): solo compite por el head cuando el overlap con
+        // la lección completa es masivo (c_full ~ mediana 27 >> c_what), es
+        // decir, la situación contiene virtualmente toda la lección — una
+        // evidencia de repeat tan fuerte que merece el head aunque el canal
+        // fino no haya visto nada. λ ∈ [15,45] da resultados idénticos
+        // (plateau por unidades; no es auto-calibración fina).
+        const W_FULL_FALLBACK: f64 = 25.0;
+        let mut df_full: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let rule_tokens_full: Vec<(u64, std::collections::HashSet<String>)> = active
+            .iter()
+            .map(|e| {
+                let set: std::collections::HashSet<String> =
+                    tokenize_words(&e.why).into_iter().collect();
+                for t in &set {
+                    *df_full.entry(t.clone()).or_default() += 1;
+                }
+                (e.id, set)
+            })
+            .collect();
+        let token_full_of = |id: u64| -> Option<&std::collections::HashSet<String>> {
+            rule_tokens_full.iter().find(|(rid, _)| *rid == id).map(|(_, t)| t)
+        };
+
         // score híbrido de TODAS las activas; heap top-3 idéntico a v2.
         let mut heap: BinaryHeap<Reverse<(u64, Reverse<usize>)>> =
             BinaryHeap::with_capacity(4);
@@ -1456,6 +1481,28 @@ impl AgentR {
                 })
                 .unwrap_or(0.0);
             let score = base + w_content * c_idf;
+            // GATEMAX: fallback del canal completo — SOLO si el canal fino no
+            // vio nada (c_idf == 0) y el overlap con la lección completa es
+            // masivo (λ·c_full supera al score estructural). Nunca resta: el
+            // ranking del canal fino queda intacto (piso de no-degradación).
+            let score = if c_idf == 0.0 {
+                let c_full: f64 = token_full_of(e.id)
+                    .map(|toks| {
+                        toks.iter()
+                            .filter(|t| q_tokens.contains(*t))
+                            .map(|t| {
+                                ((n_rules + 1.0)
+                                    / (*df_full.get(t).unwrap_or(&0) as f64 + 0.5))
+                                    .ln()
+                            })
+                            .sum()
+                    })
+                    .unwrap_or(0.0);
+                let fallback = base + W_FULL_FALLBACK * c_full;
+                score.max(fallback)
+            } else {
+                score
+            };
             hybrid_of.insert(e.id, score);
             if score <= 0.0 {
                 continue;
