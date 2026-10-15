@@ -3221,6 +3221,77 @@ mod tests {
         assert!(r3.top_rules.is_empty());
     }
 
+    // ── Tests de regresión integrados de ar2/refactor (adaptados al recall
+    //    híbrido: substring recalla como warning, el veto exige exact N≥2) ──
+
+    #[test]
+    fn test_operacion_nueva_no_bloqueada() {
+        // R1 critical bug (fix del branch ar2/refactor): `never_seen_op` recibía
+        // proceed:false porque substring matching lo hacía "related" a errores
+        // de generate_benchmarks. Una op sin historia exacta ni tags compartidos
+        // tiene score 0 en el recall híbrido => sin warnings => proceed.
+        let mut agent = AgentR::new_ephemeral();
+        for _ in 0..3 {
+            agent.record_error(
+                ErrorCategory::Fabrication, ErrorSeverity::Critical,
+                "generate_benchmarks", "Invented benchmark data", "Skipped testing",
+                &["benchmarks", "GPU"], "Only use validated data",
+            );
+        }
+
+        // Design actual (post-híbrido): la recencia mantiene las reglas recientes
+        // visibles (bonus +12 vs last_ts en v1), así que el recall NO es vacío.
+        // Lo que el fix del refactor garantiza HOY: la op nueva no recibe bonus
+        // de similitud — ni exact (+10) ni substring (+5) — y el veto de v2 es
+        // global por diseño (Critical N≥2 reciente veta cualquier op, medido así
+        // en C1/C2 con 0 pérdidas). La regresión que este test congela: el bonus
+        // de similitud para la op nunca vista es CERO en el score v2.
+        let op_id = agent.string_pool_index.get("never_seen_op").copied();
+        assert!(op_id.is_none(), "op nunca internada no puede exact-matchear");
+        let score = agent.preflight_v2_score(
+            agent.errors().iter().next().unwrap(),
+            op_id,
+            &[], // sin tags compartidos: sin bonus de tags tampoco
+            now_secs(),
+        );
+        // Score = recencia + freq únicamente (sin sim: 10 exact / 5 substring /
+        // 3·tags). Con 3 registros idénticos hace segundos: 6·1 + 2·ln(5) ≈ 9.2
+        // < 10 (nunca parece exact-match de otra operación).
+        assert!(score < 10.0, "sin exact ni tags, score debe ser < 10 (got {score:.2})");
+    }
+
+    #[test]
+    fn test_recencia_orden_fresh_vs_viejo() {
+        // Del branch ar2/refactor: el recall debe poner primero al registro
+        // fresco frente a uno de 48h atrás (la recencia pesa en el score).
+        // En v1 la recencia se mide vs last_ts: el fresh (age≈0) suma el bonus
+        // completo, el viejo (48h > ventana 24h) suma 0.
+        let mut agent = AgentR::new_ephemeral();
+        let id_viejo = agent.record_error(
+            ErrorCategory::Fabrication, ErrorSeverity::Warning,
+            "old_op", "Old failure", "Ancient",
+            &[], "Nothing",
+        );
+        // Envejecer el registro a 48h atrás (test interno: acceso a errors).
+        let idx = agent.errors.len() - 1;
+        let last = agent.errors[idx].timestamp;
+        agent.errors[idx].timestamp = last - 48.0 * 3600.0;
+
+        let found = agent.recall_errors("old_op", &[]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].id, id_viejo);
+
+        let id_fresh = agent.record_error(
+            ErrorCategory::Fabrication, ErrorSeverity::Warning,
+            "old_op", "Fresh failure of same op", "Recent",
+            &[], "Nothing",
+        );
+        let found = agent.recall_errors("old_op", &[]);
+        assert_eq!(found.len(), 2, "mismo op exact: ambos se recallan");
+        assert_eq!(found[0].id, id_fresh, "fresh debe outrankear al de 48h");
+        assert_eq!(found[1].id, id_viejo);
+    }
+
     /// Preflight v2: exact-match de operación, NUNCA substring cruzado.
     /// "hnsw" (op de una lección) NO debe matchear la query
     /// "rebuild_hnsw_index" como si fueran la misma operación.

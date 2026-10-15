@@ -731,17 +731,6 @@ async fn preflight_hybrid(
         "tuning": { "hits": agent.tuning_stats().0, "misses": agent.tuning_stats().1 },
     })))
 }
-
-/// Flush sincrónico del snapshot de Agent-R (apagado controlado de los
-/// agentes; el debounce escribe por su cuenta pero esto garantiza disco).
-async fn agent_r_flush(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let agent = state.agent_r.lock().await;
-    match agent.flush() {
-        Ok(()) => Json(serde_json::json!({"ok": true, "flushed": true})),
-        Err(e) => Json(serde_json::json!({"ok": false, "error": e})),
-    }
-}
-
 #[derive(Deserialize)]
 struct ValidateOutputRequest {
     operation: String,
@@ -902,7 +891,6 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-r/stats", get(agent_r_stats))
         .route("/agent-r/receipts/issue", post(receipts_issue))
         .route("/agent-r/receipts/verify", post(receipts_verify))
-        .route("/agent-r/flush", post(agent_r_flush))
         .route("/agent-swarm/register", post(swarm_register))
         .route("/agent-swarm/heartbeat", post(swarm_heartbeat))
         .route("/agent-swarm/tasks", post(swarm_submit_task))
