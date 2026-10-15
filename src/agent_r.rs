@@ -2670,7 +2670,34 @@ impl AgentR {
             details.push(format!("N0: uniform array of {n} identical elements"));
             LevelVerdict::Fail
         } else {
-            LevelVerdict::Pass
+            // Fix hueco M3 (probe 16-oct): output que AFIRMA verificar algo sin
+            // mecanismo de chequeo visible. Ej: un curl que solo imprime el
+            // código, o el note "chequeo de status" sin ok_codes/expect. El
+            // validador estructural lo dejaba pasar; el crítico tampoco lo
+            // disparaba (3/3 ok). Señal conservadora: issue N0 con confianza
+            // media — degrada el pass a pass_unverified pero NO lo hace Fail.
+            let text = output.to_string().to_lowercase();
+            let afirma_chequeo = ["verificar", "chequeo", "chequear", "health check", "status check", "verificación de status"]
+                .iter().any(|k| text.contains(k));
+            // NOTA (hueco M3): '-w %{http_code}' SOLO imprime el código — no
+            // es mecanismo de verificación (el probe M3 lo demostró: pasa 3/3
+            // sin señal). Mecanismo = algo que ACTÚA sobre el resultado.
+            let tiene_mecanismo = ["ok_codes", "expect", "--fail", "&&", "on_failure", "verify:", "on_error", "timeout", "--max-time"].iter().any(|k| text.contains(k));
+            if afirma_chequeo && !tiene_mecanismo {
+                issues.push(ReasoningIssue {
+                    issue_type: ErrorCategory::OutputDrift,
+                    description: format!(
+                        "N0: operation '{}' afirma un chequeo sin mecanismo visible (sin ok_codes/expect/-w/--fail/on_failure) — verificación decorativa",
+                        operation
+                    ),
+                    position: 0,
+                    confidence: 0.70,
+                });
+                details.push("N0: claim de verificación sin mecanismo (hueco M3)".into());
+                LevelVerdict::Pass // informativa: no Fail, pero queda en issues
+            } else {
+                LevelVerdict::Pass
+            }
         };
 
         // ── N1: auto-consistencia numérica (as_f64, NUNCA substring) ────
@@ -4143,6 +4170,32 @@ mod rsi_capa2_tests {
         let (_, w4, _) = a.tuning_feedback_star(Some(7), None, &store, rid.as_deref());
         assert!(w4 < w2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_n0_claim_verificacion_sin_mecanismo_hueco_m3() {
+        // Regresión del hueco M3 (probe GT 16-oct): un curl que solo imprime
+        // el código y un note "chequeo de status" pasaban 3/3 sin señal.
+        let mut a = AgentR::new_ephemeral();
+        let sin_mecanismo = serde_json::json!({
+            "cmd": "curl -sS -w '%{http_code}\\n' https://api.internal/v1/status",
+            "note": "chequeo de status"
+        });
+        let r1 = a.validate_output_v2_full("probe", &sin_mecanismo, None, None);
+        assert!(
+            r1.issues.iter().any(|i| i.description.contains("sin mecanismo visible")),
+            "claim de verificación sin mecanismo debe producir issue N0"
+        );
+        // el mismo chequeo CON mecanismo explícito no produce la issue
+        let con_mecanismo = serde_json::json!({
+            "cmd": "curl -sS -o /dev/null -w '%{http_code}' https://api.internal/v1/status",
+            "ok_codes": [200]
+        });
+        let r2 = a.validate_output_v2_full("probe", &con_mecanismo, None, None);
+        assert!(
+            !r2.issues.iter().any(|i| i.description.contains("sin mecanismo visible")),
+            "con ok_codes no hay issue de mecanismo"
+        );
     }
 
     #[test]
