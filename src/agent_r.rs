@@ -1320,7 +1320,22 @@ impl AgentR {
         tags: &[&str],
         situation: &str,
     ) -> PreflightResultV2 {
+        self.preflight_v2_hybrid_w(operation, tags, situation, 3.0)
+    }
+
+    /// Variante con W_content configurable (auto-tuning: un loop de feedback
+    /// puede ajustar W según outcomes reales; ver examples/self_tuning.rs).
+    /// W<=0 desactiva la señal de contenido (equivale a preflight_v2).
+    pub fn preflight_v2_hybrid_w(
+        &mut self,
+        operation: &str,
+        tags: &[&str],
+        situation: &str,
+        w_content: f64,
+    ) -> PreflightResultV2 {
         const W_CONTENT: f64 = 3.0;
+        let _ = W_CONTENT; // referencia documental; el peso llega por parámetro
+        let w_content = if w_content.is_finite() && w_content > 0.0 { w_content } else { 0.0 };
         let q_tokens: std::collections::HashSet<String> =
             tokenize_words(situation).into_iter().collect();
 
@@ -1369,7 +1384,7 @@ impl AgentR {
                         .sum()
                 })
                 .unwrap_or(0.0);
-            let score = base + W_CONTENT * c_idf;
+            let score = base + w_content * c_idf;
             hybrid_of.insert(e.id, score);
             if score <= 0.0 {
                 continue;
