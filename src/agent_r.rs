@@ -1283,6 +1283,32 @@ impl AgentR {
         }
     }
 
+    /// Todas las reglas activas con su score compuesto v2 (para composición:
+    /// fusión con otras señales, calibración, o exports). Orden descendente.
+    /// O(n) — mismo scorer que preflight_v2, sin heap ni veto.
+    pub fn preflight_v2_scored_all(&mut self, operation: &str, tags: &[&str]) -> Vec<ScoredRule> {
+        self.stats.total_preflights += 1;
+        let now = now_secs();
+        let op_id = self.string_pool_index.get(operation).copied();
+        let tag_ids: Vec<InternedId> = tags
+            .iter()
+            .filter_map(|t| self.string_pool_index.get(*t).copied())
+            .collect();
+        let mut all: Vec<ScoredRule> = self
+            .errors
+            .iter()
+            .filter(|e| !e.deprecated)
+            .map(|e| ScoredRule {
+                id: e.id,
+                operation: self.resolve(e.operation).to_string(),
+                what: e.what.to_string(),
+                score: self.preflight_v2_score(e, op_id, &tag_ids, now),
+            })
+            .collect();
+        all.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all
+    }
+
     /// Run pre-flight checks before an operation.
     /// Recalls relevant past errors and generates warnings/precautions.
     /// (Legado v1, intacto para compatibilidad de tests/consumidores.)
