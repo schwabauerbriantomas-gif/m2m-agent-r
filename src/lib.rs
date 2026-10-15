@@ -41,6 +41,9 @@ pub mod gpu_auto_tune;
 pub mod train_embeddings;
 pub mod agent_r;
 pub mod receipts;
+/// RSI Capa 2: crítico LLM (glm-5.3-flash) envuelto en la lib.
+/// Feature "critic" = llamada real; sin ella, stub Unavailable.
+pub mod meta;
 
 pub mod cluster;
 pub mod api;

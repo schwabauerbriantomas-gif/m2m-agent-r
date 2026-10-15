@@ -813,6 +813,40 @@ struct ReceiptsIssueRequest {
     payload: serde_json::Value,
 }
 
+#[derive(Deserialize)]
+struct AgentRRefineRequest {
+    operation: String,
+    output: serde_json::Value,
+    #[serde(default)]
+    context: String,
+}
+
+/// POST /agent-r/refine — Self-Refine (RSI Capa 2): receipt del claim ANTES,
+/// crítica glm-5.3-flash, validación N0–N3 DESPUÉS, decisión conservadora.
+/// Sin feature "critic" o sin Z_AI_API_KEY => kept_original (nunca degrada).
+/// block_on local para usar un MutexGuard async dentro de spawn_blocking.
+fn futures_rt_block_on<T>(fut: impl std::future::Future<Output = T>) -> T {
+    tokio::runtime::Handle::current()
+        .block_on(fut)
+}
+
+async fn agent_r_refine(
+    State(state): State<AppState>,
+    Json(req): Json<AgentRRefineRequest>,
+) -> Result<Json<crate::meta::RefineOutcome>, (StatusCode, String)> {
+    let store = receipts_store();
+    let agent_r = state.agent_r.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        // Bloquear el mutex async DENTRO de la tarea blocking (llamada corta
+        // del crítico: el await del lock se resuelve al instante aquí).
+        let mut agent = futures_rt_block_on(agent_r.lock());
+        crate::meta::refine(&mut agent, &store, &req.operation, &req.output, &req.context)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(outcome))
+}
+
 async fn receipts_issue(
     Json(req): Json<ReceiptsIssueRequest>,
 ) -> Result<Json<crate::receipts::Receipt>, (StatusCode, String)> {
@@ -891,6 +925,8 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-r/stats", get(agent_r_stats))
         .route("/agent-r/receipts/issue", post(receipts_issue))
         .route("/agent-r/receipts/verify", post(receipts_verify))
+        .route("/agent-r/refine", post(agent_r_refine))
+        .route("/agent-r/refine", post(agent_r_refine))
         .route("/agent-swarm/register", post(swarm_register))
         .route("/agent-swarm/heartbeat", post(swarm_heartbeat))
         .route("/agent-swarm/tasks", post(swarm_submit_task))

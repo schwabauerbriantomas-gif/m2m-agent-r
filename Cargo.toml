@@ -6,6 +6,7 @@ description = "M2M Vector Search - Native Rust implementation"
 license = "AGPL-3.0"
 
 [features]
+critic = ["dep:ureq"]
 default = []
 cuda = ["cudarc"]
 
@@ -21,6 +22,8 @@ serde_json = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 clap = { version = "4", features = ["derive"] }
 cudarc = { version = "0.19", features = ["cuda-12040"], optional = true }
+# Crítico LLM (agent_r::meta, feature "critic"): HTTP blocking mínimo.
+ureq = { version = "2", optional = true }
 
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
