@@ -960,8 +960,6 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-r/receipts/verify", post(receipts_verify))
         .route("/agent-r/refine", post(agent_r_refine))
         .route("/agent-r/self-debug", post(agent_r_self_debug))
-        .route("/agent-r/refine", post(agent_r_refine))
-        .route("/agent-r/self-debug", post(agent_r_self_debug))
         .route("/agent-swarm/register", post(swarm_register))
         .route("/agent-swarm/heartbeat", post(swarm_heartbeat))
         .route("/agent-swarm/tasks", post(swarm_submit_task))

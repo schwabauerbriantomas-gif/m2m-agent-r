@@ -455,7 +455,15 @@ fn write_json_atomic(path: &std::path::Path, json: &str) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
     }
-    let tmp = path.with_extension("json.tmp");
+    // Nombre tmp EXCLUSIVO por escritor: dos flushes concurrentes (writer
+    // background + endpoint /agent-r/flush) con el mismo tmp se pisaban
+    // (A renombra, B renombra un tmp que ya no existe => error espurio).
+    // Race vista EN PRODUCCIÓN por la muestra del swarm (16-oct).
+    let tmp = path.with_extension(format!(
+        "json.tmp.{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("t").replace(['/', '\\'], "_")
+    ));
     {
         let mut f =
             fs::File::create(&tmp).map_err(|e| format!("create {}: {}", tmp.display(), e))?;
