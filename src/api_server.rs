@@ -847,6 +847,39 @@ async fn agent_r_refine(
     Ok(Json(outcome))
 }
 
+#[derive(Deserialize)]
+struct AgentRSelfDebugRequest {
+    operation: String,
+    output: serde_json::Value,
+    #[serde(default)]
+    context: String,
+    /// Presupuesto de iteraciones crítico→validar (1..=5, default 3).
+    #[serde(default = "default_debug_budget")]
+    budget: usize,
+}
+
+fn default_debug_budget() -> usize {
+    3
+}
+
+/// POST /agent-r/self-debug — Self-Debug con budget (Capa 2): loop
+/// crítico glm-5.3-flash → N0–N3 hasta pass o agotar budget. Cada iteración
+/// con receipt; decisión conservadora (solo pass verificado reemplaza).
+async fn agent_r_self_debug(
+    State(state): State<AppState>,
+    Json(req): Json<AgentRSelfDebugRequest>,
+) -> Result<Json<crate::meta::RefineOutcome>, (StatusCode, String)> {
+    let store = receipts_store();
+    let agent_r = state.agent_r.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let mut agent = futures_rt_block_on(agent_r.lock());
+        crate::meta::self_debug(&mut agent, &store, &req.operation, &req.output, &req.context, req.budget)
+    })
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Json(outcome))
+}
+
 async fn receipts_issue(
     Json(req): Json<ReceiptsIssueRequest>,
 ) -> Result<Json<crate::receipts::Receipt>, (StatusCode, String)> {
@@ -926,7 +959,9 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-r/receipts/issue", post(receipts_issue))
         .route("/agent-r/receipts/verify", post(receipts_verify))
         .route("/agent-r/refine", post(agent_r_refine))
+        .route("/agent-r/self-debug", post(agent_r_self_debug))
         .route("/agent-r/refine", post(agent_r_refine))
+        .route("/agent-r/self-debug", post(agent_r_self_debug))
         .route("/agent-swarm/register", post(swarm_register))
         .route("/agent-swarm/heartbeat", post(swarm_heartbeat))
         .route("/agent-swarm/tasks", post(swarm_submit_task))

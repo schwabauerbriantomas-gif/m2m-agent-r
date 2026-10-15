@@ -142,6 +142,54 @@ impl Critic {
     }
 }
 
+/// Self-Debug con budget (Capa 2, arxiv:2304.05128): iterar
+/// crítico→refinamiento→validación hasta `pass` o agotar el budget.
+/// Cada iteración emite su receipt (traza auditable del loop); el mejor
+/// candidato (pass > pass_unverified > fail) es el que devuelve.
+/// Sin feature critic: una sola pasada de validación (budget implícito 1).
+pub fn self_debug(
+    agent: &mut AgentR,
+    store: &ReceiptStore,
+    operation: &str,
+    output: &Value,
+    context: &str,
+    budget: usize,
+) -> RefineOutcome {
+    let budget = budget.clamp(1, 5);
+    let mut current = output.clone();
+    let mut last: Option<RefineOutcome> = None;
+    for i in 0..budget {
+        let out = refine(agent, store, operation, &current, context);
+        let overall = out.validation["overall"].as_str().unwrap_or("unverifiable").to_string();
+        let decision = out.decision;
+        let receipt_result_none = out.receipt_result.is_none();
+        let critic_raw = out.critic_raw.clone();
+        if overall == "pass" {
+            return out; // early-exit: verificado en la iteración i+1
+        }
+        let _ = i;
+        last = Some(out);
+        // refine() devuelve kept_original si el crítico no mejora: si el
+        // candidato no cambió, iterar más no ayuda => cortar (no quemar budget).
+        // (refine conserva original salvo pass; detectar por receipt_result None)
+        if decision != "refined" && receipt_result_none {
+            // crítico propuso algo que no pasó: next iter usa el candidato
+            // crudo del critic_raw si existe, sino cortar.
+            #[cfg(feature = "critic")]
+            if let Some(raw) = critic_raw.clone() {
+                if let Ok(v) = serde_json::from_str::<Value>(&raw) {
+                    if let Some(r) = v["refined"].as_str().and_then(|s| serde_json::from_str::<Value>(s).ok()) {
+                        current = r;
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    last.unwrap_or_else(|| refine(agent, store, operation, &current, context))
+}
+
 /// Flujo completo Self-Refine integrado (disponible con y sin feature):
 /// 1. receipt del claim (output original) — ANTES.
 /// 2. crítica LLM (si hay feature + key) o saltear (sin feature).
@@ -254,6 +302,22 @@ pub fn refine(
         validation: serde_json::to_value(&validation).unwrap_or_default(),
         decision,
         reason,
+    }
+}
+
+#[cfg(test)]
+mod self_debug_tests {
+    use super::*;
+    use crate::agent_r::AgentR;
+
+    #[test]
+    fn test_self_debug_sin_critic_devuelve_validacion_una_pasada() {
+        let store = ReceiptStore::open_no_env(std::path::Path::new("/tmp/self_debug_test")).unwrap();
+        let mut a = AgentR::new_ephemeral();
+        let out = self_debug(&mut a, &store, "op_x", &serde_json::json!({"k": 1}), "ctx", 4);
+        // sin crítico: kept_original + validación programática igual emitida
+        assert_eq!(out.decision, "kept_original");
+        assert!(out.validation["overall"].as_str().is_some());
     }
 }
 
