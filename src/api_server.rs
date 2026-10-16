@@ -978,6 +978,67 @@ async fn agent_r_answer(
     }
 }
 
+/// POST /agent-r/insights — ExpeL: registrar insight derivado de lecciones.
+async fn agent_r_insight(
+    State(state): State<AppState>,
+    Json(req): Json<InsightRequest>,
+) -> Json<Value> {
+    let ar = state.agent_r.clone();
+    let id = tokio::task::spawn_blocking(move || {
+        let guard = futures_rt_block_on(async { ar.lock().await });
+        let mut a = guard;
+        a.record_insight(&req.operation, &req.insight, &req.derived_from)
+    })
+    .await
+    .unwrap_or(0);
+    Json(json!({"insight_id": id}))
+}
+
+#[derive(Deserialize)]
+struct InsightRequest {
+    operation: String,
+    insight: String,
+    #[serde(default)]
+    derived_from: Vec<u64>,
+}
+
+/// POST /agent-r/skills/induce — AWM: inducir workflows de éxitos verificados.
+async fn agent_r_induce(
+    State(state): State<AppState>,
+) -> Json<Value> {
+    let ar = state.agent_r.clone();
+    let ids = tokio::task::spawn_blocking(move || {
+        let guard = futures_rt_block_on(async { ar.lock().await });
+        let mut a = guard;
+        a.induce_workflows(2, 5) // window 2..=5, min_count de la firma
+    })
+    .await
+    .unwrap_or_default();
+    Json(json!({"skills_inducidos": ids.len(), "skill_ids": ids}))
+}
+
+/// GET /agent-r/capacity — radiografía de capacidad (meta: nada muerto).
+async fn agent_r_capacity(
+    State(state): State<AppState>,
+) -> Json<Value> {
+    let ar = state.agent_r.clone();
+    let cap = tokio::task::spawn_blocking(move || {
+        let guard = futures_rt_block_on(async { ar.lock().await });
+        let a = guard;
+        json!({
+            "errores": a.errors().len(),
+            "exitos": a.success_count(),
+            "insights": a.insights.len(),
+            "skills": a.skills.len(),
+            "preguntas_abiertas": a.questions_iter().filter(|q| q.status == crate::meta_curiosity::QStatus::Open).count(),
+            "w": a.w_content(),
+        })
+    })
+    .await
+    .unwrap_or(json!({"error": "lock"}));
+    Json(cap)
+}
+
 /// POST /agent-r/self-debug — Self-Debug con budget (Capa 2): loop
 /// crítico glm-5.3-flash → N0–N3 hasta pass o agotar budget. Cada iteración
 /// con receipt; decisión conservadora (solo pass verificado reemplaza).
@@ -1078,6 +1139,9 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-r/questions", get(agent_r_questions))
         .route("/agent-r/questions/ask", post(agent_r_ask))
         .route("/agent-r/questions/:id/answer", post(agent_r_answer))
+        .route("/agent-r/insights", post(agent_r_insight))
+        .route("/agent-r/skills/induce", post(agent_r_induce))
+        .route("/agent-r/capacity", get(agent_r_capacity))
         .route("/agent-r/self-debug", post(agent_r_self_debug))
         .route("/agent-swarm/register", post(swarm_register))
         .route("/agent-swarm/heartbeat", post(swarm_heartbeat))

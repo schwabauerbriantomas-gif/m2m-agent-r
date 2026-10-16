@@ -128,6 +128,30 @@ impl Critic {
             .ok_or_else(|| format!("crítico sin content: {}", v))
     }
 
+    /// Cache M1b (mejora velocidad, ronda GT): temperature 0 + mismo prompt =>
+    /// misma crítica esperada. Evita re-llamar a z.ai por contenido idéntico
+    /// (self_debug round 2+, retries). Cap 512 entradas FIFO. NO se usa en
+    /// mayoría-de-3 (el voto REQUIERE re-llamar para medir ruido del serving).
+    fn ask_cached(&self, user: &str) -> Result<String, String> {
+        use std::sync::{Mutex, OnceLock};
+        static CACHE: OnceLock<Mutex<Vec<(u64, String)>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(Vec::with_capacity(512)));
+        let key = fnv1a_64(user.as_bytes());
+        if let Ok(map) = cache.lock() {
+            if let Some((_, hit)) = map.iter().find(|(k, _)| *k == key) {
+                return Ok(hit.clone());
+            }
+        }
+        let raw = self.ask(CRITIC_SYSTEM, user)?;
+        if let Ok(mut map) = cache.lock() {
+            if map.len() >= 512 {
+                map.remove(0); // FIFO
+            }
+            map.push((key, raw.clone()));
+        }
+        Ok(raw)
+    }
+
     /// Prompt de crítica: output del executor + contexto => JSON con
     /// {verdict: "ok"|"issues", issues: [...], refined: "..."}.
     /// El prompt EXIGE formato JSON para parseo programático (nada de prosa).
@@ -136,7 +160,7 @@ impl Critic {
         let user = format!(
             "Operación: {operation}\n\nContexto:\n{context}\n\nOutput a criticar:\n{output}\n\nRespondé solo el JSON."
         );
-        let raw = self.ask(system, &user)?;
+        let raw = self.ask_cached(&user)?;
         // El modelo puede envolver en ```json ... ``` — limpiar.
         let cleaned = raw
             .trim()
@@ -339,4 +363,44 @@ mod tests {
         }).expect("critic");
         assert_eq!(c.model(), "glm-5.3-flash");
     }
+}
+
+#[cfg(all(test, feature = "critic"))]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn test_fnv1a64_determinista() {
+        assert_eq!(fnv1a_64(b"hola"), fnv1a_64(b"hola"));
+        assert_ne!(fnv1a_64(b"hola"), fnv1a_64(b"chau"));
+    }
+
+    #[test]
+    fn test_cache_fifo_cap() {
+        use std::sync::{Mutex, OnceLock};
+        static CACHE: OnceLock<Mutex<Vec<(u64, String)>>> = OnceLock::new();
+        let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+        for i in 0..600u64 {
+            let map = cache.lock().unwrap();
+            drop(map);
+            let mut map = cache.lock().unwrap();
+            if map.len() >= 512 {
+                map.remove(0);
+            }
+            map.push((i, format!("v{i}")));
+        }
+        let map = cache.lock().unwrap();
+        assert_eq!(map.len(), 512);
+        assert_eq!(map[0].0, 88, "el primer elemento debe ser el 88 (FIFO)");
+    }
+}
+
+/// FNV-1a 64-bit (key de cache del crítico).
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }

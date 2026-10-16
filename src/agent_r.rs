@@ -2927,6 +2927,11 @@ impl AgentR {
     }
 
     /// Get all recorded errors (en orden de inserción; slice contiguo).
+    /// Cantidad de éxitos registrados (api_server no toca el campo privado).
+    pub fn success_count(&self) -> usize {
+        self.successes.len()
+    }
+
     pub fn errors(&self) -> &[ErrorRecord] {
         self.errors.as_slices().0
     }
