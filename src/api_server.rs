@@ -1010,7 +1010,7 @@ async fn agent_r_induce(
     let ids = tokio::task::spawn_blocking(move || {
         let guard = futures_rt_block_on(async { ar.lock().await });
         let mut a = guard;
-        a.induce_workflows(2, 5) // window 2..=5, min_count de la firma
+        a.induce_workflows(2, 2) // window=2, min_count=2 (>=2 repeticiones promociona)
     })
     .await
     .unwrap_or_default();
