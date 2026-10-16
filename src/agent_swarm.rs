@@ -494,7 +494,16 @@ impl AgentSwarm {
         if let Some(pred) = predicted {
             agent_r.tuning_feedback(Some(pred), None);
         }
-        let _ = agent_r.record_success(&task.operation, result, None);
+        // M3b (mejora capacidad): el result puede traer receipt_id (JSON) —
+        // extraerlo para que el éxito sea inducible a skill (AWM exige receipt).
+        let receipt = serde_json::from_str::<serde_json::Value>(result)
+            .ok()
+            .and_then(|v| {
+                v.get("receipt_id")
+                    .and_then(|r| r.as_str())
+                    .map(|s| s.to_string())
+            });
+        let _ = agent_r.record_success(&task.operation, result, receipt);
         true
     }
 
