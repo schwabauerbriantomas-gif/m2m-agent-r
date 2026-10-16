@@ -832,12 +832,39 @@ fn futures_rt_block_on<T>(fut: impl std::future::Future<Output = T>) -> T {
         .block_on(fut)
 }
 
+/// Registry de contexto operacional por dominio (T1 v4, lección del probe:
+/// sin entorno declarado el crítico es ciego a defectos dependientes de
+/// contexto — recall 50%→90% al agregarlo). NO incluye nunca el GT.
+fn operational_context(operation: &str) -> Option<&'static str> {
+    let op = operation.to_lowercase();
+    if op.contains("deploy") || op.contains("k8s") || op.contains("kubectl") {
+        Some("Entorno: producción Kubernetes (kubectl disponible). Runbook: canary vía k8s/canary.yaml; verificación de rollout (kubectl rollout status) obligatoria antes de dar por terminado un deploy; cada deploy exitoso emite receipt propio al final; NO usar kubectl set image (bypasa el manifiesto).")
+    } else if op.contains("db") || op.contains("migration") || op.contains("psql") || op.contains("sql") {
+        Some("Entorno: PostgreSQL 15 de producción. Migraciones en migrations/ numeradas, corren SOLO desde el runner único 'migrator' (psql directo bypasea el bookkeeping); usar ON_ERROR_STOP=1; CREATE INDEX debe ser CONCURRENTLY en tablas grandes; pg_advisory_xact_lock se libera al COMMIT (para lock de sesión usar pg_advisory_lock + unlock explícito).")
+    } else if op.contains("cleanup") || op.contains("file") || op.contains("log") || op.contains("tmp") || op.contains("delete") {
+        Some("Entorno: Ubuntu 22.04 de producción, usuario de servicio 'deploy'. Artefactos viejos en /var/artifacts/old; logs en /var/log/app. tmpreaper existe (tmpwatch NO); find -delete solo con -type f y path acotado; dry-run antes de cualquier purge nueva.")
+    } else if op.contains("api") || op.contains("curl") || op.contains("http") || op.contains("health") || op.contains("ping") {
+        Some("Entorno: API interna https://api.internal (nginx VIP). Endpoints reales: /v1/status, /v1/ping, /v1/orders, /health. Backend interno: 10.0.0.42:8443. Un chequeo sin mecanismo que actúe sobre el resultado (ok_codes/expect/--fail) es verificación decorativa.")
+    } else if op.contains("monitor") || op.contains("alert") || op.contains("prometheus") || op.contains("grafana") {
+        Some("Entorno: stack Prometheus+Grafana en producción; alertas vía Alertmanager; webhook de guardias en https://alerts.internal/webhook; reglas se validan con promtool antes del reload.")
+    } else {
+        None
+    }
+}
+
 async fn agent_r_refine(
     State(state): State<AppState>,
     Json(req): Json<AgentRRefineRequest>,
 ) -> Result<Json<crate::meta::RefineOutcome>, (StatusCode, String)> {
     let store = receipts_store();
     let agent_r = state.agent_r.clone();
+    // M3c: enriquecer contexto vacío con el registry operacional del dominio.
+    let mut req = req;
+    if req.context.trim().is_empty() {
+        if let Some(ctx) = operational_context(&req.operation) {
+            req.context = ctx.to_string();
+        }
+    }
     let outcome = tokio::task::spawn_blocking(move || {
         // Bloquear el mutex async DENTRO de la tarea blocking (llamada corta
         // del crítico: el await del lock se resuelve al instante aquí).
