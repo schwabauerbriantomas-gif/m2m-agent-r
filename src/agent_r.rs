@@ -1769,8 +1769,38 @@ impl AgentR {
                 return q.id; // dedup
             }
         }
+        // GC anti disk-fill (hunt 1, 16-oct): 200 asks únicos sin rate-limit
+        // quedaron para siempre como Open e inflaron el snapshot a 2MB. Tope
+        // de abiertas: al exceder, drop FIFO (las respondidas NUNCA se borran —
+        // son evidencia).
+        const MAX_OPEN_QUESTIONS: usize = 200;
+        let open_count = self
+            .questions
+            .iter()
+            .filter(|q| q.status == crate::meta_curiosity::QStatus::Open)
+            .count();
+        if open_count >= MAX_OPEN_QUESTIONS {
+            let mut to_drop = open_count - MAX_OPEN_QUESTIONS + 1; // +1 por la nueva
+            self.questions.retain(|q| {
+                if to_drop == 0 {
+                    return true;
+                }
+                if q.status == crate::meta_curiosity::QStatus::Open {
+                    to_drop -= 1;
+                    false // FIFO: las más viejas primero
+                } else {
+                    true
+                }
+            });
+        }
         let id = self.next_id;
         self.next_id += 1;
+        // Límite de tamaño (hunt 1: ask aceptaba payloads de 1MB)
+        let text = if text.len() > 4096 {
+            format!("{}…[truncado]", &text[..4096])
+        } else {
+            text
+        };
         self.questions.push(crate::meta_curiosity::Question {
             id,
             timestamp: now_secs(),
@@ -4170,6 +4200,39 @@ mod rsi_capa2_tests {
         let (_, w4, _) = a.tuning_feedback_star(Some(7), None, &store, rid.as_deref());
         assert!(w4 < w2);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_questions_gc_anti_disk_fill_hunt1() {
+        // Regresión del hunt 1: 200 asks únicos sin rate-limit inflaban el
+        // snapshot para siempre (todas Open, sin GC). Tope: 200 abiertas FIFO.
+        use crate::meta_curiosity::{self, CriticalPoint};
+        let mut a = AgentR::new_ephemeral();
+        for i in 0..250 {
+            meta_curiosity::ask_custom(
+                &mut a,
+                CriticalPoint::SecurityFinding { finding: format!("flood {i}") },
+                format!("pregunta flood {i}"),
+                crate::meta_curiosity::Priority::Low,
+            );
+        }
+        let abiertas = a.questions_iter()
+            .filter(|q| q.status == crate::meta_curiosity::QStatus::Open)
+            .count();
+        assert_eq!(abiertas, 200, "GC FIFO debe mantener el tope de abiertas");
+        // las más viejas (0..49) deben haber caído; la 249 debe estar
+        assert!(!a.questions_iter().any(|q| q.text.contains("flood 0")));
+        assert!(a.questions_iter().any(|q| q.text.contains("flood 249")));
+        // texto gigante truncado a 4KB (hunt 1: aceptaba 1MB)
+        let gigante = "x".repeat(100_000);
+        let id = meta_curiosity::ask_custom(
+            &mut a,
+            CriticalPoint::Surprise { expected: "a".into(), got: gigante },
+            "pregunta con payload gigante truncado".repeat(400), // >4KB
+            crate::meta_curiosity::Priority::Low,
+        );
+        let q = a.questions_iter().find(|q| q.id == id).unwrap();
+        assert!(q.text.len() <= 4096 + 20, "texto debe truncarse a ~4KB");
     }
 
     #[test]
