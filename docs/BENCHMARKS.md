@@ -58,3 +58,86 @@ vector-search engine**, not the Agent-R server path; they were moved to
 `docs/history/` and are superseded by this file. Test counts over time:
 276/276 lib at integration time (docs/OPT_INTEGRACION.md:27), 324 lib + 3
 integration passing today (baseline run, 2026-10-25).
+
+## Mechanism comparison (in-process, deterministic)
+
+Comparación de **mecanismos de memoria de errores** sobre un corpus sintético
+determinista — **no** una comparación contra productos externos. Harness:
+`tests/comparison.rs` (reproducible con
+`cargo test --test comparison -- --nocapture`).
+
+### Metodología
+
+- **Corpus** (seed `0x20261025`, ChaCha8, fingerprint FNV-64 pinneado
+  `0x4e8743339e66234d`): 40 operaciones × 4–5 firmas de falla recurrente
+  (184 firmas, 1 incidente canónico c/u) + 46 incidentes únicos de ruido
+  (20% del total, nunca consultados) = **230 incidentes**. Los textos
+  what/why/prevention se generan de plantillas con vocabulario cerrado (26
+  arquetipos de falla); el orden de ingestión es un shuffle seedeado.
+- **Queries**: 408 = 368 positivas (2 por firma, **paráfrasis** del
+  what/why — plantillas distintas, ~30% sinónimos, ~25% keyword distractor de
+  otro tema, para castigar matching ingenuo; ground truth = la firma) + 40
+  negativas (operaciones **sin historial**, miden falsos vetos).
+- **Estrategias**, todas in-process sobre el MISMO corpus y las MISMAS
+  queries: `no_memory` (piso), `exact_match` (v1: `HashMap<op, lección más
+  reciente>`), `keyword_overlap` (bag-of-words con IDF simple del corpus sobre
+  what+why vs situación — **proxy honesto de similarity-search sin
+  embeddings**), y `agent_r_hybrid` (el sistema real vía lib pública:
+  `AgentR::preflight_v2_hybrid`, el mismo call que `api_server` sirve en
+  `POST /agent-r/preflight-hybrid`; memoria limpia con `new_ephemeral`).
+- **Latencias** medidas en build **debug** (CI corre `cargo test` sin
+  optimizar; release ≈ 10× más rápido). **Memoria**: `exact_match`/
+  `keyword_overlap` son deep-size estructural estimado; `agent_r_hybrid` es
+  medición real del snapshot JSON flushed (ΔVmRSS reportado como ruidoso).
+- **Determinismo**: 3 corridas — corpus, hits, vetos y fingerprint
+  **idénticos**; solo latencia y bytes del snapshot oscilan (timestamps).
+
+### Resultados medidos (debug build)
+
+| strategy | top1_hit | top3_hit | false_veto_rate | p50 µs | p95 µs | bytes/incident |
+|---|---|---|---|---|---|---|
+| no_memory | 0.000 | 0.000 | n/a (sin veto) | 0.0 | 0.1 | 0 |
+| exact_match | 0.185 | 0.185 | n/a (sin veto) | 0.4 | 0.5 | 10 B (est.; guarda ~1 lección/op) |
+| keyword_overlap | 0.584 | 0.742 | n/a (sin veto) | ~1100 | ~1500 | 794 B (est.) |
+| agent_r_hybrid | 0.139 | 0.503 | **0.500** | ~9300 | ~12000 | ~558 B (snapshot JSON medido; ΔVmRSS ≈ 1 KB/inc, ruidoso) |
+| agent_r_hybrid (diagnóstico repeat-quote) | **0.000** | — | — | — | — | situación = what+why VERBATIM |
+| keyword_overlap (diagnóstico repeat-quote) | 1.000 | — | — | — | — | ídem |
+
+### Hallazgos (la comparación honesta manda)
+
+1. **El híbrido queda DEBAJO de exact_match en top1** (0.139 vs 0.185) y
+   **debajo de keyword_overlap en top3** (0.503 vs 0.742) en este corpus. Las
+   aserciones objetivo del plan (`hybrid ≥ exact` top1, `hybrid ≥ keyword`
+   top3, `false_veto < 5%`, `p95 < 10 ms`) **no se cumplen** con los números
+   reales y NO se forzaron: el test pinnea el baseline medido con margen y
+   este documento es el registro de la verdad.
+2. **Causa raíz** (análisis de `preflight_v2_hybrid_w`, confirmado por el
+   dump de misses que imprime el test): el canal de fallback de lección
+   completa (`W_FULL_FALLBACK = 25`) aplica `25 × ΣIDF` a **cualquier** regla
+   cuyo `why` comparta ≥1 token distintivo con la situación **aunque su
+   `what` no tenga overlap** (c_idf == 0), sin gate de overlap mínimo. La
+   regla CORRECTA, que matchea el canal fino (`c_idf > 0` sobre `what`), es
+   **inelegible** para el fallback y queda en `base + 3·c_idf`. Un solo token
+   compartido en el `why` de una regla ajena (~IDF 4–5 ⇒ ~100–125) supera el
+   match fino correcto (~40–60): el fallback domina el ranking completo.
+3. **El diagnóstico repeat-quote lo prueba en el caso de diseño**: citando
+   VERBATIM el what+why de la lección correcta, el híbrido da top1 = 0.000
+   (las reglas ajenas ganan por el fallback) mientras keyword_overlap da
+   1.000. El canal fallback fue calibrado para repetición-cita (c_full
+   mediana ~27 en los datos de linaje); en corpus con vocabulario más chico
+   y colisiones accidentales invierte la dominancia.
+4. **Falsos vetos = 50%** (20/40 queries negativas vetadas): el veto (regla
+   Critical con recurrencia ≥ 1 en el top-3) hereda el ranking envenenado —
+   reglas Critical ajenas a la operación alcanzan el top-3 por el fallback.
+5. **Latencia**: el híbrido re-tokeniza what+why de TODAS las reglas activas
+   en cada query (O(n·tokens)); en debug p50 ≈ 9.3 ms @ 230 reglas (para
+   referencia, README reporta p50 16.9 ms @ 100k en release).
+6. Nota positiva: la fila "Hybrid preflight hit-rate" de la sección *Quality
+   metrics — UNVERIFIED* (top-1 29% / top-3 42% del logbook) ahora tiene un
+   harness reproducible; este test mide 0.139/0.503 en su corpus propio.
+
+Los umbrales del test se calibraron con margen BAJO los valores medidos
+(floors 0.10/0.45, pin de false_veto 0.60, presupuesto de latencia 30 ms
+debug / 10 ms release) para que cualquier **degradación adicional** rompa CI;
+cuando el mecanismo mejore, tightear los floors y restaurar las aserciones
+objetivo (`hybrid ≥ exact` top1, `hybrid ≥ keyword` top3, `false_veto < 5%`).
