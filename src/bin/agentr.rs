@@ -13,7 +13,7 @@
 //!
 //! Formato de salida: texto para humano, --json para pipes/scripts.
 
-use m2m_vector_search::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
 use std::path::PathBuf;
 
 fn state_path() -> PathBuf {
@@ -227,7 +227,7 @@ fn main() {
             println!("[agentr] server HTTP en 127.0.0.1:{port} (Ctrl-C para cortar)");
             let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
             rt.block_on(async {
-                if let Err(e) = m2m_vector_search::api_server::run_server(port).await {
+                if let Err(e) = agent_r::api_server::run_server(port).await {
                     eprintln!("[agentr] server error: {e}");
                     std::process::exit(1);
                 }

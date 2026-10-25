@@ -1,7 +1,7 @@
 //! Smoke e2e de meta::refine: receipt claim → crítica glm-5.3-flash → N0-N3.
-use m2m_vector_search::agent_r::AgentR;
-use m2m_vector_search::meta;
-use m2m_vector_search::receipts::ReceiptStore;
+use agent_r::agent_r::AgentR;
+use agent_r::meta;
+use agent_r::receipts::ReceiptStore;
 
 fn main() {
     std::env::set_var("AGENT_R_NO_SEED", "1");

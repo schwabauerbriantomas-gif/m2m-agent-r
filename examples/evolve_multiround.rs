@@ -18,9 +18,9 @@
 //!   CARGO_TARGET_DIR=target cargo run --release --example evolve_multiround -- \
 //!       --data ../bench_data/benchtrace --out /tmp/t3_evolve_multiround
 
-use m2m_vector_search::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
-use m2m_vector_search::meta_evolve::{evolve, EvolveSpace, ReplayScore};
-use m2m_vector_search::receipts::ReceiptStore;
+use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use agent_r::meta_evolve::{evolve, EvolveSpace, ReplayScore};
+use agent_r::receipts::ReceiptStore;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;

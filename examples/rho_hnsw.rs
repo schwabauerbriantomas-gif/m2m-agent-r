@@ -8,8 +8,8 @@
 //! Output: una linea JSON por caso, con sufijo _OK.
 use std::sync::atomic::Ordering as AtomicOrdering;
 
-use m2m_vector_search::hnsw_index::{HNSWIndex, HNSW_DIST_COMPUTATIONS};
-use m2m_vector_search::interfaces::VectorIndex;
+use agent_r::hnsw_index::{HNSWIndex, HNSW_DIST_COMPUTATIONS};
+use agent_r::interfaces::VectorIndex;
 use ndarray::Array2;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};

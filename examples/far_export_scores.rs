@@ -10,7 +10,7 @@
 //!   CARGO_TARGET_DIR=target cargo run --release --example far_export_scores -- \
 //!     ../bench_data/benchtrace
 
-use m2m_vector_search::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;

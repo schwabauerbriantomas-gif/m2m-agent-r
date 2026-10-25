@@ -17,7 +17,7 @@
 //!
 //! Uso típico (endpoint POST /agent-r/refine en api_server):
 //! ```no_run
-//! use m2m_vector_search::meta::Critic;
+//! use agent_r::meta::Critic;
 //! let critic = Critic::from_env().unwrap();
 //! let out = critic.refine_operation("deploy_prod",
 //!     "salida sospechosa del executor", "contexto de la operación");

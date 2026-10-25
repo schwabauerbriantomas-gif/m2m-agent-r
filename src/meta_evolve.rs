@@ -15,7 +15,7 @@
 //!
 //! Uso (harness R02 como evaluator):
 //! ```no_run
-//! use m2m_vector_search::meta::evolve::EvolveSpace;
+//! use agent_r::meta::evolve::EvolveSpace;
 //! let space = EvolveSpace { w_values: vec![1.0, 1.5, 2.0, 2.5, 3.0] };
 //! // evolve(&mut agent, &store, space, |a, w| evaluator_closure);
 //! ```

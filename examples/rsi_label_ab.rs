@@ -17,8 +17,8 @@
 //!   CARGO_TARGET_DIR=target cargo run --release --example rsi_label_ab -- \
 //!       --data ../bench_data/benchtrace --out /tmp/rsi_capa1
 
-use m2m_vector_search::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
-use m2m_vector_search::receipts::ReceiptStore;
+use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use agent_r::receipts::ReceiptStore;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;

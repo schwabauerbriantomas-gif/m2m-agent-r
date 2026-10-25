@@ -1,6 +1,6 @@
-use m2m_vector_search::agent_r::AgentR;
-use m2m_vector_search::meta_evolve::{evolve, EvolveSpace, ReplayScore};
-use m2m_vector_search::receipts::ReceiptStore;
+use agent_r::agent_r::AgentR;
+use agent_r::meta_evolve::{evolve, EvolveSpace, ReplayScore};
+use agent_r::receipts::ReceiptStore;
 use std::path::PathBuf;
 
 fn main() {

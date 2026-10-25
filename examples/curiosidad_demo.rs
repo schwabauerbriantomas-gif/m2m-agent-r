@@ -1,8 +1,8 @@
 //! Demo curiosidad guiada: las 3 preguntas que user hizo manualmente en la
 //! ronda 2, regeneradas por el sistema y respondidas con la evidencia real.
 //! Uso: cargo run --release --example curiosidad_demo
-use m2m_vector_search::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
-use m2m_vector_search::meta_curiosity::{self, CriticalPoint, QStatus};
+use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use agent_r::meta_curiosity::{self, CriticalPoint, QStatus};
 
 fn main() {
     let mut a = AgentR::new_ephemeral();
