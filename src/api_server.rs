@@ -475,7 +475,7 @@ async fn swarm_preflight(
     let tags: Vec<&str> = req.context_tags.iter().map(|s| s.as_str()).collect();
     let mut out = match &req.situation {
         Some(s) if !s.trim().is_empty() => {
-            let mut r = agent_r.preflight_v2_hybrid(&req.operation, &tags, s);
+            let r = agent_r.preflight_v2_hybrid(&req.operation, &tags, s);
             serde_json::json!({
                 "proceed": r.proceed,
                 "relevant_errors": r.relevant_errors,

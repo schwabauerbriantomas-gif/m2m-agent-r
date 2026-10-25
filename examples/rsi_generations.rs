@@ -45,8 +45,8 @@
 //!   - métricas: top1_hits / top3_hits (una lección correcta es regla #1 /
 //!     está en el top-3) + n. Azar de referencia: 1/45 y 3/45.
 
-use m2m_vector_search::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
-use m2m_vector_search::receipts::ReceiptStore;
+use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use agent_r::receipts::ReceiptStore;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -567,7 +567,7 @@ fn run_mode(data_dir: &str, out_dir: &str) -> i32 {
         "version": 1,
         "ts_ms": now_ms() as u64,
         "data_dir": data_dir,
-        "lib": "m2m_vector_search (wt_valid, ar2/validate-preflight)",
+        "lib": "agent_r (wt_valid, ar2/validate-preflight)",
         "protocolo": {
             "bench": "BenchTrace babyai L1 — C1/C2 (top-1/top-3 preflight híbrido)",
             "memoria": "record_error de TODOS los core_failure (what=diagnosis[:160], tags [model,babyai,level-1])",
@@ -609,7 +609,7 @@ fn verify_mode(run_dir: &str) -> i32 {
             let value = g["metrics"][metric].clone();
             let verdict = store
                 .n3_check(&json!({"receipt_id": rid, "claim": {"metric": metric, "value": value}}));
-            if verdict != m2m_vector_search::receipts::N3Verdict::Pass {
+            if verdict != agent_r::receipts::N3Verdict::Pass {
                 failures.push(format!(
                     "G{}: claim {}={} no respaldado por el receipt ({:?})",
                     i, metric, value, verdict

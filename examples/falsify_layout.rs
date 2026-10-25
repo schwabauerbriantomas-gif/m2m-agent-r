@@ -12,7 +12,7 @@
 //!
 //! Corrida: cargo run --release --example falsify_layout --quiet (CARGO_TARGET_DIR propio)
 
-use m2m_vector_search::agent_r::{ErrorCategory, ErrorRecord, ErrorSeverity};
+use agent_r::agent_r::{ErrorCategory, ErrorRecord, ErrorSeverity};
 
 /// Tamaño de asignación glibc para un string de `len` bytes (bins de 16, headers
 /// incluidos en el len observado: aproximación de campo, no de malloc header).

@@ -1,13 +1,13 @@
 //! agent_r::meta — Crítico LLM externo envuelto en la lib (RSI Capa 2).
 //!
-//! REGLA (guardrail arxiv:2310.01798 + orden de user 15-oct): la crítica
+//! REGLA (guardrail arxiv:2310.01798 + decisión 15-oct): la crítica
 //! LLM externa cuenta como señal SOLO si
 //!   1. se emite un receipt HMAC del claim ANTES de consultar al crítico,
 //!   2. el veredicto pasa por la validación programática N0–N3 (con store)
 //!      DESPUÉS — el crítico nunca auto-aplica nada,
 //!   3. todo queda en el snapshot del Agent-R (memoria, no stdout).
 //!
-//! Modelo: **glm-5.3-flash** (orden verbatim de user: "No uses glm 4.7 usa
+//! Modelo: **glm-5.3-flash** (decisión verbatim: "No uses glm 4.7 usa
 //! glm 5.3 flash"). Endpoint z.ai coding PAAS, temperature 0.0,
 //! max_tokens>=3000 (el reasoning_content consume tokens).
 //!
@@ -17,10 +17,16 @@
 //!
 //! Uso típico (endpoint POST /agent-r/refine en api_server):
 //! ```no_run
-//! use m2m_vector_search::meta::Critic;
-//! let critic = Critic::from_env().unwrap();
-//! let out = critic.refine_operation("deploy_prod",
-//!     "salida sospechosa del executor", "contexto de la operación");
+//! use agent_r::agent_r::AgentR;
+//! use agent_r::meta::refine;
+//! use agent_r::receipts::ReceiptStore;
+//!
+//! // Con feature `critic` + Z_AI_API_KEY, refine() consulta al crítico LLM
+//! // (sin feature/key sigue el flujo con el output original):
+//! let mut agent = AgentR::new_ephemeral();
+//! let store = ReceiptStore::open("receipts").unwrap();
+//! let out = refine(&mut agent, &store, "deploy_prod",
+//!     &serde_json::json!("salida sospechosa del executor"), "contexto de la operación");
 //! // out.receipt_id: receipt del claim emitido ANTES de la crítica.
 //! // out.validation: N0–N3 del output refinado (post-crítica).
 //! ```
@@ -29,9 +35,9 @@ use crate::agent_r::AgentR;
 use crate::receipts::ReceiptStore;
 use serde_json::{json, Value};
 
-/// Modelo del crítico — FIJO por orden de user (15-oct): glm-5.3-flash.
+/// Modelo del crítico — FIJO por decisión de diseño (15-oct): glm-5.3-flash.
 pub const CRITIC_MODEL: &str = "glm-5.3-flash";
-/// Endpoint z.ai (plan coding de user; costo cubierto por el plan).
+/// Endpoint z.ai (API pública).
 pub const CRITIC_ENDPOINT: &str = "https://api.z.ai/api/coding/paas/v4/chat/completions";
 /// Piso de max_tokens: el modelo razona (reasoning_content consume tokens).
 pub const CRITIC_MAX_TOKENS: u32 = 3000;
@@ -161,7 +167,6 @@ impl Critic {
         output: &str,
         context: &str,
     ) -> Result<Value, String> {
-        let system = CRITIC_SYSTEM;
         let user = format!(
             "Operación: {operation}\n\nContexto:\n{context}\n\nOutput a criticar:\n{output}\n\nRespondé solo el JSON."
         );
@@ -191,6 +196,8 @@ pub fn self_debug(
     budget: usize,
 ) -> RefineOutcome {
     let budget = budget.clamp(1, 5);
+    // `mut` + reassign solo se usan con feature `critic` (retry con candidato crudo).
+    #[cfg_attr(not(feature = "critic"), allow(unused_mut))]
     let mut current = output.clone();
     let mut last: Option<RefineOutcome> = None;
     for i in 0..budget {
@@ -200,8 +207,9 @@ pub fn self_debug(
             .unwrap_or("unverifiable")
             .to_string();
         let decision = out.decision;
-        let receipt_result_none = out.receipt_result.is_none();
+        #[cfg(feature = "critic")]
         let critic_raw = out.critic_raw.clone();
+        let receipt_result_none = out.receipt_result.is_none();
         if overall == "pass" {
             return out; // early-exit: verificado en la iteración i+1
         }
@@ -418,6 +426,7 @@ mod cache_tests {
 }
 
 /// FNV-1a 64-bit (key de cache del crítico).
+#[cfg(feature = "critic")]
 fn fnv1a_64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     for &b in bytes {

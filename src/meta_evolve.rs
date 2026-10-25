@@ -15,14 +15,21 @@
 //!
 //! Uso (harness R02 como evaluator):
 //! ```no_run
-//! use m2m_vector_search::meta::evolve::EvolveSpace;
+//! use agent_r::agent_r::AgentR;
+//! use agent_r::meta_evolve::{EvolveSpace, ReplayScore};
+//! use agent_r::receipts::ReceiptStore;
+//!
+//! let mut agent = AgentR::new_ephemeral();
+//! let store = ReceiptStore::open("receipts").unwrap();
 //! let space = EvolveSpace { w_values: vec![1.0, 1.5, 2.0, 2.5, 3.0] };
-//! // evolve(&mut agent, &store, space, |a, w| evaluator_closure);
+//! let report = agent_r::meta_evolve::evolve(&mut agent, &store, &space,
+//!     |_a, w| ReplayScore { w, score: 1.0, tiebreak: 1.0, n: 10 }, 0.05);
+//! // report.promoted: true si el mejor W superó al incumbent por >= margin.
 //! ```
 
 use crate::agent_r::AgentR;
 use crate::receipts::ReceiptStore;
-use serde_json::{json, Value};
+use serde_json::json;
 
 /// Espacio de búsqueda acotado (determinista, SIN mutación estocástica:
 /// reproducibilidad total — mismo grid, mismo resultado).

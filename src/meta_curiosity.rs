@@ -1,4 +1,4 @@
-//! agent_r::meta_curiosity — Curiosidad guiada (RSI, pedido de user 16-oct):
+//! agent_r::meta_curiosity — Curiosidad guiada (RSI, decisión de diseño 16-oct):
 //! el sistema debe GENERARSE preguntas en puntos críticos en vez de esperar
 //! que un humano las formule ("ya van 3 preguntas guías que podían ser
 //! autónomas": valida numéricamente / ¿por qué baja el recall? / esta misma).
@@ -21,7 +21,6 @@
 //!   - receipt re-usable (T2)             => observe_security_finding
 
 use crate::agent_r::AgentR;
-use serde_json::{json, Value};
 
 /// Punto crítico que dispara la pregunta.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -145,7 +144,7 @@ pub fn elaborate(agent: &AgentR, question_id: u64) -> Option<String> {
         serde_json::to_string(&q.point).unwrap_or_default()
     );
     let raw = critic.ask(sys, &user).ok()?;
-    let v: Value = serde_json::from_str(
+    let v: serde_json::Value = serde_json::from_str(
         raw.trim()
             .trim_start_matches("```json")
             .trim_start_matches("```")

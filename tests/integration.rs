@@ -1,8 +1,8 @@
 //! Integration tests for M2M Vector Search.
 
-use m2m_vector_search::config::M2MConfig;
-use m2m_vector_search::encoding::FullEmbeddingBuilder;
-use m2m_vector_search::splats::SplatStore;
+use agent_r::config::M2MConfig;
+use agent_r::encoding::FullEmbeddingBuilder;
+use agent_r::splats::SplatStore;
 use ndarray::{Array1, Array2};
 use rand::Rng;
 use rand::SeedableRng;

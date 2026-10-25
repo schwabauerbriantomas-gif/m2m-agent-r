@@ -24,8 +24,8 @@
 //!
 //! Reporte: /tmp/t2_gate_fuzz.json. Correr con AGENT_R_NO_SEED=1.
 
-use m2m_vector_search::agent_r::AgentR;
-use m2m_vector_search::receipts::ReceiptStore;
+use agent_r::agent_r::AgentR;
+use agent_r::receipts::ReceiptStore;
 use serde_json::json;
 use std::fs;
 

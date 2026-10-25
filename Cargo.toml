@@ -1,14 +1,13 @@
 [package]
-name = "m2m-vector-search"
+name = "agent-r"
 version = "2.1.0"
 edition = "2021"
-description = "M2M Vector Search - Native Rust implementation"
+description = "Agent-R — error memory & self-tuning server for LLM agents (Rust)"
 license = "AGPL-3.0"
 
 [features]
 critic = ["dep:ureq"]
 default = []
-cuda = ["cudarc"]
 
 [dependencies]
 ndarray = { version = "0.16", features = ["serde"] }
@@ -19,9 +18,6 @@ rand_distr = "0.4"
 regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rusqlite = { version = "0.31", features = ["bundled"] }
-clap = { version = "4", features = ["derive"] }
-cudarc = { version = "0.19", features = ["cuda-12040"], optional = true }
 # Crítico LLM (agent_r::meta, feature "critic"): HTTP blocking mínimo.
 ureq = { version = "2", optional = true }
 

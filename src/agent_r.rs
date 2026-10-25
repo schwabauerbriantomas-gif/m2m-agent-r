@@ -450,9 +450,6 @@ struct FlushJob {
 struct FlushHandle {
     tx: std::sync::mpsc::SyncSender<FlushJob>,
     committed_gen: Arc<AtomicU64>,
-    /// Exclusión mutua entre el writer background y `flush()` síncrono para
-    /// que tmp+rename de ambos nunca se interleave sobre el mismo path.
-    write_lock: Arc<std::sync::Mutex<()>>,
 }
 
 /// Escritura atómica de un snapshot YA serializado (tmp + rename).
@@ -653,9 +650,8 @@ pub struct AgentR {
 fn spawn_flusher() -> FlushHandle {
     let (tx, rx) = std::sync::mpsc::sync_channel::<FlushJob>(FLUSH_QUEUE);
     let committed_gen = Arc::new(AtomicU64::new(0));
-    let write_lock = Arc::new(std::sync::Mutex::new(()));
     let committed_w = committed_gen.clone();
-    let lock_w = write_lock.clone();
+    let lock_w = Arc::new(std::sync::Mutex::new(()));
     std::thread::Builder::new()
         .name("agent-r-flusher".into())
         .spawn(move || {
@@ -679,11 +675,7 @@ fn spawn_flusher() -> FlushHandle {
             }
         })
         .expect("spawn agent-r-flusher");
-    FlushHandle {
-        tx,
-        committed_gen,
-        write_lock,
-    }
+    FlushHandle { tx, committed_gen }
 }
 
 impl Drop for AgentR {
@@ -1444,7 +1436,7 @@ impl AgentR {
             // Tag overlap (ids internados contra ids internados)
             for tag in tags {
                 if let Some(&tid) = self.string_pool_index.get(*tag) {
-                    if e.context_tags.iter().any(|t| *t == tid) {
+                    if e.context_tags.contains(&tid) {
                         score += 3.0;
                     }
                 }
@@ -1674,6 +1666,7 @@ impl AgentR {
     /// - (Some, Some) p!=a → miss (W×0.95, floor 0.5).
     /// - (Some, None) → miss: se predijo y el outcome mostró que la regla NO
     ///   aplicaba (ej. task completó sin tropezar con ella).
+    ///
     /// Devuelve (outcome, w_nuevo).
     /// Reflexion/STaR (Capa 2): racionalizar la lección del fix VERIFICADO.
     /// `lesson` = cómo se arregló (traza), se guarda en el error original.
@@ -1770,7 +1763,7 @@ impl AgentR {
             .filter(|s| {
                 !s.deprecated
                     && (s.receipt_id.is_some() || s.times_used > 0)
-                    && op_id.map_or(true, |op| s.operation == op)
+                    && op_id.is_none_or(|op| s.operation == op)
             })
             .collect()
     }
@@ -2027,7 +2020,7 @@ impl AgentR {
             // no trivial (la evidencia mentiona la lección de verdad).
             if overlap >= 2.0 && jaccard >= 0.08 {
                 let score = overlap * jaccard + e.recurrence as f64 * 0.1;
-                if best.map_or(true, |(bs, _)| score > bs) {
+                if best.is_none_or(|(bs, _)| score > bs) {
                     best = Some((score, e.id));
                 }
             }
@@ -2642,7 +2635,7 @@ impl AgentR {
         }
 
         // Check 4: Run custom validators
-        checks_run += self.validators.len() as usize;
+        checks_run += self.validators.len();
         for validator in &self.validators {
             if let Some(issue) = validator(operation, output) {
                 issues.push(issue);
@@ -2990,7 +2983,7 @@ impl AgentR {
             n3_receipt: n3,
         };
         let levels = [n0, n1, n2, n3];
-        let any_fail = levels.iter().any(|l| *l == LevelVerdict::Fail);
+        let any_fail = levels.contains(&LevelVerdict::Fail);
         // R03 Capa 1: un "pass" respaldado solo por forma (N0/N1) sin evidencia
         // ni receipt es pass-NO-verificado: overall distingue para que ninguna
         // promoción de regla use un pass sin N2/N3.
@@ -3085,7 +3078,7 @@ impl AgentR {
             *counts.entry(e.operation).or_insert(0) += 1;
         }
         let mut sorted: Vec<_> = counts.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.1));
         sorted
             .into_iter()
             .take(limit)

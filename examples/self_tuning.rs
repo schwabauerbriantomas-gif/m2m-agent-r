@@ -13,7 +13,7 @@
 //!      hit (refuerza W_content); si el outcome trae una regla DISTINTA =>
 //!      miss (W_content baja); si no había regla aplicable => abstención
 //!      (sin castigo: castigar abstención destruye la exploración, lección
-//!      del curriculum de user).
+//!      del currículo de ejemplos).
 //!   4. REGISTRO:    cada veredicto queda en el propio Agent-R como
 //!      incidente (dogfooding: el agente se observa a sí mismo).
 //!
@@ -25,7 +25,7 @@
 //!   CARGO_TARGET_DIR=target cargo run --release --example self_tuning -- \
 //!     ../bench_data/benchtrace
 
-use m2m_vector_search::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;

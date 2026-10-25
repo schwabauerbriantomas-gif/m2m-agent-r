@@ -236,6 +236,12 @@ pub struct AgentSwarm {
     claim_timeout_s: f64,
 }
 
+impl Default for AgentSwarm {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AgentSwarm {
     /// Swarm nuevo (la memoria compartida la presta el server por &AgentR).
     pub fn new() -> Self {
@@ -386,16 +392,10 @@ impl AgentSwarm {
 
     /// Regla señalada en el claim (None = no hubo preflight con regla).
     pub fn task_rule(&self, task_id: u64) -> Option<u64> {
-        self.tasks
-            .lock()
-            .unwrap()
-            .get(&task_id)?
-            .veto_rule
-            .lock()
-            .unwrap()
-            .clone()
+        let tasks = self.tasks.lock().unwrap();
+        let rule = tasks.get(&task_id)?.veto_rule.lock().unwrap();
+        *rule
     }
-
     /// CLAIM lock-free: un solo CAS sobre el estado atómico de la tarea.
     /// N agentes compitiendo => exactamente uno gana.
     /// Fallback determinista: si la tarea está CLAIMED por un agente MUERTO

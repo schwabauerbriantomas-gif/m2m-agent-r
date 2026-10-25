@@ -20,16 +20,19 @@ import shutil
 import signal
 import subprocess
 import sys
+from pathlib import Path
 import time
 import urllib.request
 import urllib.error
 
 HOME = os.path.expanduser("~")
-RUST_DIR = f"{HOME}/swarm_agent_r/wt_integrate"
-RUST_TARGET = f"{HOME}/swarm_agent_r/target-integrate"
-RUST_BIN = f"{HOME}/swarm_agent_r/bin_integrate"
+# Repo override por env; default: padre de scripts/ (repo clonado).
+REPO = os.environ.get("AGENT_R_REPO", str(Path(__file__).resolve().parent.parent))
+RUST_DIR = REPO
+RUST_TARGET = os.environ.get("AGENT_R_TARGET_DIR", os.path.join(REPO, "target"))
+RUST_BIN = os.environ.get("AGENT_R_BIN", os.path.join(REPO, "target", "release", "agentr"))
 RUST_DEFAULT_PORT = 19103
-PY_DIR = f"{HOME}/swarm_m2m_unify/work/m2m-vector-search"
+PY_DIR = os.environ.get("AGENT_R_PY_DIR", os.path.join(HOME, "swarm_m2m_unify/work/m2m-vector-search"))
 PY_VENV = f"{HOME}/venvs/m2m-py"
 PY_DEFAULT_PORT = 8080
 CTL_DIR = f"{HOME}/.m2mctl"
@@ -158,7 +161,7 @@ def cmd_build(args):
         ok = r.returncode == 0
         res = {"ok": ok, "target": "rust", "elapsed_s": round(time.time() - t0, 1)}
         if ok and args.deploy:
-            shutil.copy2(f"{RUST_TARGET}/release/m2m-vector-search", RUST_BIN)
+            shutil.copy2(f"{RUST_TARGET}/release/agentr", RUST_BIN)
             res["deployed_to"] = RUST_BIN
         if not ok:
             res["stderr_tail"] = r.stderr[-2000:]

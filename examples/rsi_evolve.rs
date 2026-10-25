@@ -8,9 +8,9 @@
 //!   CARGO_TARGET_DIR=target cargo run --release --example rsi_evolve -- \
 //!       --data ../bench_data/benchtrace --out /tmp/rsi_capa3
 
-use m2m_vector_search::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
-use m2m_vector_search::meta_evolve::{evolve, EvolveSpace, ReplayScore};
-use m2m_vector_search::receipts::ReceiptStore;
+use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
+use agent_r::meta_evolve::{evolve, EvolveSpace, ReplayScore};
+use agent_r::receipts::ReceiptStore;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::fs;

@@ -5,7 +5,7 @@
 //! proyecta escala a 100k / 1M errores. corre con:
 //!   CARGO_TARGET_DIR=$HOME/swarm_agent_r/target cargo run --release --example rambench_anatomy
 
-use m2m_vector_search::agent_r::{ErrorCategory, ErrorRecord, ErrorSeverity};
+use agent_r::agent_r::{ErrorCategory, ErrorRecord, ErrorSeverity};
 
 /// Bytes heap de un String de longitud `len` (capacidad == len, alineación 1).
 fn string_heap(s: &str) -> usize {
