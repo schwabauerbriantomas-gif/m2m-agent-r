@@ -786,6 +786,12 @@ mod tests {
             config.enable_cuda = false;
             config.enable_vulkan = false;
             config.enable_gpu_search = false;
+            // Scale cap: distributed pide 10M splats (25.6 GB de una sola
+            // preallocación) y gpu 5M (12.8 GB). Este test verifica el
+            // runtime del preset con 2 splats — la escala no aporta nada y
+            // aborta runners de CI con poca RAM.
+            config.max_splats = config.max_splats.min(10_000);
+            config.n_splats_init = config.n_splats_init.min(config.max_splats);
             config.finalize();
 
             let mut store = SplatStore::new(config);
