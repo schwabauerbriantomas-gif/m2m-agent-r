@@ -17,10 +17,16 @@
 //!
 //! Uso típico (endpoint POST /agent-r/refine en api_server):
 //! ```no_run
-//! use agent_r::meta::Critic;
-//! let critic = Critic::from_env().unwrap();
-//! let out = critic.refine_operation("deploy_prod",
-//!     "salida sospechosa del executor", "contexto de la operación");
+//! use agent_r::agent_r::AgentR;
+//! use agent_r::meta::refine;
+//! use agent_r::receipts::ReceiptStore;
+//!
+//! // Con feature `critic` + Z_AI_API_KEY, refine() consulta al crítico LLM
+//! // (sin feature/key sigue el flujo con el output original):
+//! let mut agent = AgentR::new_ephemeral();
+//! let store = ReceiptStore::open("receipts").unwrap();
+//! let out = refine(&mut agent, &store, "deploy_prod",
+//!     &serde_json::json!("salida sospechosa del executor"), "contexto de la operación");
 //! // out.receipt_id: receipt del claim emitido ANTES de la crítica.
 //! // out.validation: N0–N3 del output refinado (post-crítica).
 //! ```
