@@ -200,7 +200,7 @@ Multiple agents can share one memory and coordinate through the server: a task q
 
 ## Benchmarks (summary)
 
-All numbers measured on the reference machine (AMD Ryzen 5 3400G, 8 threads, WSL2, release build, seed 20261012, concurrency 10, synthetic splitmix64 payloads). Full methodology and raw sources: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md).
+All numbers measured on the reference machine (AMD Ryzen 5 3400G, 8 threads, WSL2, release build, seed 20261012, concurrency 10, synthetic splitmix64 payloads). Full methodology and raw sources: [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md). For the deterministic in-process comparison of error-memory mechanisms (no_memory vs exact_match vs keyword_overlap vs agent-r hybrid), see [`Mechanism comparison`](docs/BENCHMARKS.md#mechanism-comparison-in-process-deterministic).
 
 | Metric | Value | Conditions |
 |--------|-------|-----------|
