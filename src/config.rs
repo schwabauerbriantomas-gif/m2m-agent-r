@@ -1085,6 +1085,12 @@ mod tests {
         config.enable_cuda = false;
         config.enable_vulkan = false;
         config.enable_gpu_search = false;
+        // Estos tests verifican SUBSYSTEM FLAGS por preset, no escala. Los
+        // presets distributed/gpu piden max_splats = 10M; a 2560 B/splat
+        // (dim 320, mean+covarianza f32) eso es UNA sola preallocación de
+        // 25.6 GB que aborta runners de CI con poca RAM.
+        config.max_splats = 10_000;
+        config.n_splats_init = config.n_splats_init.min(config.max_splats);
         config.finalize();
         crate::splats::SplatStore::new(config)
     }
