@@ -2,7 +2,7 @@
 
 **Error memory & self-tuning server for LLM agents, written in Rust.**
 
-[![CI](https://github.com/userusertomas-gif/m2m-agent-r/actions/workflows/ci.yml/badge.svg)](https://github.com/userusertomas-gif/m2m-agent-r/actions/workflows/ci.yml)
+[![CI](https://github.com/schwabauerbriantomas-gif/m2m-agent-r/actions/workflows/ci.yml/badge.svg)](https://github.com/schwabauerbriantomas-gif/m2m-agent-r/actions/workflows/ci.yml)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Rust Edition 2021](https://img.shields.io/badge/rust-2021-orange.svg)](https://blog.rust-lang.org/2021/10/21/Rust-1.56.0.html)
 
@@ -57,7 +57,7 @@ Everything is exposed over an HTTP API (axum), a zero-latency local CLI (`agentr
 Requirements: Rust stable (edition 2021). No GPU, database or external services needed.
 
 ```bash
-git clone https://github.com/userusertomas-gif/m2m-agent-r.git agent-r && cd agent-r
+git clone https://github.com/schwabauerbriantomas-gif/m2m-agent-r.git agent-r && cd agent-r
 cargo build --release
 
 # 1) Start the HTTP server (axum) — binds 127.0.0.1
