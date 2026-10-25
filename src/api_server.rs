@@ -25,9 +25,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower_http::cors::CorsLayer;
 
-use crate::splats::SplatStore;
-use crate::config::M2MConfig;
 use crate::agent_r::{AgentR, ErrorCategory, ErrorSeverity, WriteOutcome};
+use crate::config::M2MConfig;
+use crate::splats::SplatStore;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -121,36 +121,45 @@ async fn store_memory(
         let store = state.store.lock().await;
         store.get_statistics().embedding_dim
     };
-    
-    let embedding = req.embedding.unwrap_or_else(|| {
-        simple_hash_embedding(&req.text, dim)
-    });
-    
+
+    let embedding = req
+        .embedding
+        .unwrap_or_else(|| simple_hash_embedding(&req.text, dim));
+
     // Hold a single lock for the entire insert to prevent TOCTOU races
     let mut store = state.store.lock().await;
-    let arr = Array2::from_shape_vec((1, dim), embedding.clone())
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("Bad embedding shape: {}", e)))?;
-    
+    let arr = Array2::from_shape_vec((1, dim), embedding.clone()).map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            format!("Bad embedding shape: {}", e),
+        )
+    })?;
+
     let added = store.add_splat(&arr);
     if !added {
         return Err((StatusCode::INSUFFICIENT_STORAGE, "Store full".into()));
     }
-    
+
     // Mark index as dirty — will be rebuilt lazily or on demand
     drop(store);
     state.index_dirty.notify_one();
-    
+
     let mut id_counter = state.next_id.lock().await;
     *id_counter += 1;
     let id = req.id.unwrap_or_else(|| format!("mem_{}", *id_counter));
-    
-    Ok((StatusCode::OK, Json(StoreResponse {
-        id,
-        status: "stored".into(),
-    })))
+
+    Ok((
+        StatusCode::OK,
+        Json(StoreResponse {
+            id,
+            status: "stored".into(),
+        }),
+    ))
 }
 
-async fn rebuild_index(State(state): State<AppState>) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+async fn rebuild_index(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let mut store = state.store.lock().await;
     store.build_index();
     let stats = store.get_statistics();
@@ -170,18 +179,18 @@ async fn search_memories(
     let store = state.store.lock().await;
     let dim = store.get_statistics().embedding_dim;
     let k = req.top_k.unwrap_or(10).min(store.n_active());
-    
+
     if store.n_active() == 0 {
         return Ok(Json(SearchResponse { results: vec![] }));
     }
-    
-    let embedding = req.embedding.unwrap_or_else(|| {
-        simple_hash_embedding(&req.query, dim)
-    });
-    
+
+    let embedding = req
+        .embedding
+        .unwrap_or_else(|| simple_hash_embedding(&req.query, dim));
+
     let query = Array1::from_vec(embedding);
     let neighbors = store.find_neighbors(&query.view(), k);
-    
+
     let results: Vec<SearchResult> = neighbors
         .into_iter()
         .map(|n| SearchResult {
@@ -190,7 +199,7 @@ async fn search_memories(
             metadata: None,
         })
         .collect();
-    
+
     Ok(Json(SearchResponse { results }))
 }
 
@@ -200,7 +209,7 @@ async fn search_memories(
 fn simple_hash_embedding(text: &str, dim: usize) -> Vec<f32> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut result = Vec::with_capacity(dim);
     for i in 0..dim {
         let mut hasher = DefaultHasher::new();
@@ -262,7 +271,10 @@ async fn swarm_register(
     Json(req): Json<SwarmRegisterRequest>,
 ) -> Json<SwarmRegisterResponse> {
     let caps: Vec<&str> = req.capabilities.iter().map(|s| s.as_str()).collect();
-    let role = req.role.as_deref().and_then(crate::agent_swarm::SwarmRole::from_str);
+    let role = req
+        .role
+        .as_deref()
+        .and_then(crate::agent_swarm::SwarmRole::from_str);
     let name = state.swarm.register_agent(&req.name, &caps, role);
     let agents_role = state
         .swarm
@@ -270,7 +282,11 @@ async fn swarm_register(
         .iter()
         .find(|a| a.name == name)
         .map(|a| a.role);
-    Json(SwarmRegisterResponse { name, ok: true, role: agents_role })
+    Json(SwarmRegisterResponse {
+        name,
+        ok: true,
+        role: agents_role,
+    })
 }
 
 #[derive(Deserialize)]
@@ -287,7 +303,9 @@ async fn swarm_heartbeat(
     State(state): State<AppState>,
     Json(req): Json<SwarmHeartbeatRequest>,
 ) -> Json<SwarmHeartbeatResponse> {
-    Json(SwarmHeartbeatResponse { ok: state.swarm.heartbeat(&req.name) })
+    Json(SwarmHeartbeatResponse {
+        ok: state.swarm.heartbeat(&req.name),
+    })
 }
 
 #[derive(Deserialize)]
@@ -355,7 +373,9 @@ async fn swarm_complete_task(
 ) -> Json<SwarmCompleteResponse> {
     let mut agent_r = state.agent_r.lock().await;
     Json(SwarmCompleteResponse {
-        ok: state.swarm.complete_task(&mut agent_r, req.task_id, &req.agent, &req.result),
+        ok: state
+            .swarm
+            .complete_task(&mut agent_r, req.task_id, &req.agent, &req.result),
     })
 }
 
@@ -377,7 +397,9 @@ async fn swarm_fail_task(
 ) -> Json<SwarmFailResponse> {
     let mut agent_r = state.agent_r.lock().await;
     Json(SwarmFailResponse {
-        ok: state.swarm.fail_task(&mut agent_r, req.task_id, &req.agent, &req.reason),
+        ok: state
+            .swarm
+            .fail_task(&mut agent_r, req.task_id, &req.agent, &req.reason),
     })
 }
 
@@ -426,7 +448,9 @@ async fn swarm_barrier_arrive(
     State(state): State<AppState>,
     Json(req): Json<SwarmBarrierArriveRequest>,
 ) -> Json<SwarmBarrierArriveResponse> {
-    Json(SwarmBarrierArriveResponse { open: state.swarm.barrier_arrive(req.barrier_id) })
+    Json(SwarmBarrierArriveResponse {
+        open: state.swarm.barrier_arrive(req.barrier_id),
+    })
 }
 
 #[derive(Deserialize)]
@@ -464,7 +488,9 @@ async fn swarm_preflight(
                 "w_content": agent_r.w_content(),
             })
         }
-        _ => state.swarm.preflight_shared(&mut agent_r, &req.operation, &tags),
+        _ => state
+            .swarm
+            .preflight_shared(&mut agent_r, &req.operation, &tags),
     };
     // Self-tuning: grabar la regla top-1 en la task para que el outcome
     // (complete/fail) la use como etiqueta — SOLO si hay una regla real
@@ -472,7 +498,11 @@ async fn swarm_preflight(
     // cuentan como predicción).
     if let Some(tid) = req.task_id {
         let top = out.get("top_rules").and_then(|t| t.get(0));
-        let score_ok = top.and_then(|r| r.get("score")).and_then(|v| v.as_f64()).unwrap_or(0.0) >= 10.0;
+        let score_ok = top
+            .and_then(|r| r.get("score"))
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0)
+            >= 10.0;
         if score_ok {
             if let Some(rule) = top.and_then(|r| r.get("id")).and_then(|v| v.as_u64()) {
                 state.swarm.set_task_rule(tid, rule);
@@ -510,7 +540,10 @@ async fn swarm_set_role(
     let role = crate::agent_swarm::SwarmRole::from_str(&req.role)
         .map(|r| state.swarm.set_role(&req.coordinator, &req.agent, r))
         .unwrap_or(None);
-    Json(SwarmSetRoleResponse { ok: role.is_some(), role })
+    Json(SwarmSetRoleResponse {
+        ok: role.is_some(),
+        role,
+    })
 }
 
 #[derive(Deserialize)]
@@ -536,10 +569,22 @@ async fn swarm_submit_proposal(
     Json(req): Json<SwarmSubmitProposalRequest>,
 ) -> Json<SwarmSubmitProposalResponse> {
     match state.swarm.submit_proposal(
-        &req.proposer, &req.title, &req.body, &req.operation, req.min_votes,
+        &req.proposer,
+        &req.title,
+        &req.body,
+        &req.operation,
+        req.min_votes,
     ) {
-        Ok(id) => Json(SwarmSubmitProposalResponse { ok: true, proposal_id: Some(id), error: None }),
-        Err(e) => Json(SwarmSubmitProposalResponse { ok: false, proposal_id: None, error: Some(e) }),
+        Ok(id) => Json(SwarmSubmitProposalResponse {
+            ok: true,
+            proposal_id: Some(id),
+            error: None,
+        }),
+        Err(e) => Json(SwarmSubmitProposalResponse {
+            ok: false,
+            proposal_id: None,
+            error: Some(e),
+        }),
     }
 }
 
@@ -561,9 +606,12 @@ async fn swarm_vote(
     State(state): State<AppState>,
     Json(req): Json<SwarmVoteRequest>,
 ) -> Json<SwarmVoteResponse> {
-    let result = state
-        .swarm
-        .vote_proposal(req.proposal_id, &req.voter, req.decision.eq_ignore_ascii_case("accept"), &req.reason);
+    let result = state.swarm.vote_proposal(
+        req.proposal_id,
+        &req.voter,
+        req.decision.eq_ignore_ascii_case("accept"),
+        &req.reason,
+    );
     Json(SwarmVoteResponse { result })
 }
 
@@ -610,10 +658,12 @@ async fn swarm_proposal_status(
     State(state): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<SwarmProposalQuery>,
 ) -> Json<serde_json::Value> {
-    Json(state
-        .swarm
-        .proposal_status(q.proposal_id)
-        .unwrap_or(serde_json::json!({"error": "propuesta inexistente"})))
+    Json(
+        state
+            .swarm
+            .proposal_status(q.proposal_id)
+            .unwrap_or(serde_json::json!({"error": "propuesta inexistente"})),
+    )
 }
 
 #[derive(Serialize)]
@@ -622,7 +672,9 @@ struct SwarmCloseStalledResponse {
 }
 
 async fn swarm_close_stalled(State(state): State<AppState>) -> Json<SwarmCloseStalledResponse> {
-    Json(SwarmCloseStalledResponse { closed: state.swarm.close_stalled() })
+    Json(SwarmCloseStalledResponse {
+        closed: state.swarm.close_stalled(),
+    })
 }
 
 #[derive(Serialize)]
@@ -672,7 +724,11 @@ async fn record_error(
         &tags,
         &req.prevention,
     );
-    Ok(Json(RecordErrorResponse { id, outcome, recurrence }))
+    Ok(Json(RecordErrorResponse {
+        id,
+        outcome,
+        recurrence,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -799,7 +855,8 @@ fn receipts_store() -> std::sync::Arc<crate::receipts::ReceiptStore> {
                 // Sin disco disponible no caemos: receipts efímeros en RAM
                 // (dir temporal). La clave sigue sin loggearse.
                 Err(_) => {
-                    let tmp = std::env::temp_dir().join(format!("receipts_ram_{}", std::process::id()));
+                    let tmp =
+                        std::env::temp_dir().join(format!("receipts_ram_{}", std::process::id()));
                     std::sync::Arc::new(
                         crate::receipts::ReceiptStore::open(&tmp)
                             .expect("receipts en tmp debe poder abrirse"),
@@ -828,8 +885,7 @@ struct AgentRRefineRequest {
 /// Sin feature "critic" o sin Z_AI_API_KEY => kept_original (nunca degrada).
 /// block_on local para usar un MutexGuard async dentro de spawn_blocking.
 fn futures_rt_block_on<T>(fut: impl std::future::Future<Output = T>) -> T {
-    tokio::runtime::Handle::current()
-        .block_on(fut)
+    tokio::runtime::Handle::current().block_on(fut)
 }
 
 /// Registry de contexto operacional por dominio (T1 v4, lección del probe:
@@ -839,13 +895,31 @@ fn operational_context(operation: &str) -> Option<&'static str> {
     let op = operation.to_lowercase();
     if op.contains("deploy") || op.contains("k8s") || op.contains("kubectl") {
         Some("Entorno: producción Kubernetes (kubectl disponible). Runbook: canary vía k8s/canary.yaml; verificación de rollout (kubectl rollout status) obligatoria antes de dar por terminado un deploy; cada deploy exitoso emite receipt propio al final; NO usar kubectl set image (bypasa el manifiesto).")
-    } else if op.contains("db") || op.contains("migration") || op.contains("psql") || op.contains("sql") {
+    } else if op.contains("db")
+        || op.contains("migration")
+        || op.contains("psql")
+        || op.contains("sql")
+    {
         Some("Entorno: PostgreSQL 15 de producción. Migraciones en migrations/ numeradas, corren SOLO desde el runner único 'migrator' (psql directo bypasea el bookkeeping); usar ON_ERROR_STOP=1; CREATE INDEX debe ser CONCURRENTLY en tablas grandes; pg_advisory_xact_lock se libera al COMMIT (para lock de sesión usar pg_advisory_lock + unlock explícito).")
-    } else if op.contains("cleanup") || op.contains("file") || op.contains("log") || op.contains("tmp") || op.contains("delete") {
+    } else if op.contains("cleanup")
+        || op.contains("file")
+        || op.contains("log")
+        || op.contains("tmp")
+        || op.contains("delete")
+    {
         Some("Entorno: Ubuntu 22.04 de producción, usuario de servicio 'deploy'. Artefactos viejos en /var/artifacts/old; logs en /var/log/app. tmpreaper existe (tmpwatch NO); find -delete solo con -type f y path acotado; dry-run antes de cualquier purge nueva.")
-    } else if op.contains("api") || op.contains("curl") || op.contains("http") || op.contains("health") || op.contains("ping") {
+    } else if op.contains("api")
+        || op.contains("curl")
+        || op.contains("http")
+        || op.contains("health")
+        || op.contains("ping")
+    {
         Some("Entorno: API interna https://api.internal (nginx VIP). Endpoints reales: /v1/status, /v1/ping, /v1/orders, /health. Backend interno: 10.0.0.42:8443. Un chequeo sin mecanismo que actúe sobre el resultado (ok_codes/expect/--fail) es verificación decorativa.")
-    } else if op.contains("monitor") || op.contains("alert") || op.contains("prometheus") || op.contains("grafana") {
+    } else if op.contains("monitor")
+        || op.contains("alert")
+        || op.contains("prometheus")
+        || op.contains("grafana")
+    {
         Some("Entorno: stack Prometheus+Grafana en producción; alertas vía Alertmanager; webhook de guardias en https://alerts.internal/webhook; reglas se validan con promtool antes del reload.")
     } else {
         None
@@ -869,7 +943,13 @@ async fn agent_r_refine(
         // Bloquear el mutex async DENTRO de la tarea blocking (llamada corta
         // del crítico: el await del lock se resuelve al instante aquí).
         let mut agent = futures_rt_block_on(agent_r.lock());
-        crate::meta::refine(&mut agent, &store, &req.operation, &req.output, &req.context)
+        crate::meta::refine(
+            &mut agent,
+            &store,
+            &req.operation,
+            &req.output,
+            &req.context,
+        )
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -893,22 +973,22 @@ fn default_debug_budget() -> usize {
 
 /// GET /agent-r/questions — curiosidad guiada (ronda 3): lista preguntas
 /// abiertas/cerradas del snapshot. ?status=open|answered filtra.
-async fn agent_r_questions(
-    State(state): State<AppState>,
-) -> Json<Value> {
+async fn agent_r_questions(State(state): State<AppState>) -> Json<Value> {
     let ar = state.agent_r.clone();
     let questions = tokio::task::spawn_blocking(move || {
         let guard = futures_rt_block_on(async { ar.lock().await });
         let a = guard;
         a.questions_iter()
-            .map(|q| json!({
-                "id": q.id,
-                "priority": format!("{:?}", q.priority),
-                "status": format!("{:?}", q.status),
-                "text": q.text,
-                "answer": q.answer.as_ref().map(|s| s.to_string()),
-                "lesson_id": q.lesson_id,
-            }))
+            .map(|q| {
+                json!({
+                    "id": q.id,
+                    "priority": format!("{:?}", q.priority),
+                    "status": format!("{:?}", q.status),
+                    "text": q.text,
+                    "answer": q.answer.as_ref().map(|s| s.to_string()),
+                    "lesson_id": q.lesson_id,
+                })
+            })
             .collect::<Vec<_>>()
     })
     .await
@@ -935,10 +1015,7 @@ struct AskRequest {
 
 /// POST /agent-r/questions — curiosidad guiada (ronda 3): dispara una pregunta
 /// según el punto crítico reportado (dedup por texto en la lib).
-async fn agent_r_ask(
-    State(state): State<AppState>,
-    Json(req): Json<AskRequest>,
-) -> Json<Value> {
+async fn agent_r_ask(State(state): State<AppState>, Json(req): Json<AskRequest>) -> Json<Value> {
     use crate::meta_curiosity::{self, CriticalPoint};
     let ar = state.agent_r.clone();
     let point = match req.kind.as_str() {
@@ -958,7 +1035,9 @@ async fn agent_r_ask(
             got: req.got.unwrap_or_default(),
         },
         other => {
-            return Json(json!({"error": format!("kind desconocido: {other} (validos: metric_delta, claim_unvalidated, security_finding, surprise)")}))
+            return Json(
+                json!({"error": format!("kind desconocido: {other} (validos: metric_delta, claim_unvalidated, security_finding, surprise)")}),
+            )
         }
     };
     let id = tokio::task::spawn_blocking(move || {
@@ -1030,9 +1109,7 @@ struct InsightRequest {
 }
 
 /// POST /agent-r/skills/induce — AWM: inducir workflows de éxitos verificados.
-async fn agent_r_induce(
-    State(state): State<AppState>,
-) -> Json<Value> {
+async fn agent_r_induce(State(state): State<AppState>) -> Json<Value> {
     let ar = state.agent_r.clone();
     let ids = tokio::task::spawn_blocking(move || {
         let guard = futures_rt_block_on(async { ar.lock().await });
@@ -1045,9 +1122,7 @@ async fn agent_r_induce(
 }
 
 /// GET /agent-r/capacity — radiografía de capacidad (meta: nada muerto).
-async fn agent_r_capacity(
-    State(state): State<AppState>,
-) -> Json<Value> {
+async fn agent_r_capacity(State(state): State<AppState>) -> Json<Value> {
     let ar = state.agent_r.clone();
     let cap = tokio::task::spawn_blocking(move || {
         let guard = futures_rt_block_on(async { ar.lock().await });
@@ -1077,7 +1152,14 @@ async fn agent_r_self_debug(
     let agent_r = state.agent_r.clone();
     let outcome = tokio::task::spawn_blocking(move || {
         let mut agent = futures_rt_block_on(agent_r.lock());
-        crate::meta::self_debug(&mut agent, &store, &req.operation, &req.output, &req.context, req.budget)
+        crate::meta::self_debug(
+            &mut agent,
+            &store,
+            &req.operation,
+            &req.output,
+            &req.context,
+            req.budget,
+        )
     })
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -1184,9 +1266,15 @@ pub async fn run_server(port: u16) -> anyhow::Result<()> {
         .route("/agent-swarm/roles", post(swarm_set_role))
         .route("/agent-swarm/proposals", post(swarm_submit_proposal))
         .route("/agent-swarm/proposals/vote", post(swarm_vote))
-        .route("/agent-swarm/proposals/materialize", post(swarm_materialize))
+        .route(
+            "/agent-swarm/proposals/materialize",
+            post(swarm_materialize),
+        )
         .route("/agent-swarm/proposals/status", get(swarm_proposal_status))
-        .route("/agent-swarm/proposals/close-stalled", post(swarm_close_stalled))
+        .route(
+            "/agent-swarm/proposals/close-stalled",
+            post(swarm_close_stalled),
+        )
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -1229,7 +1317,9 @@ mod receipts_endpoint_tests {
         let app = Router::new()
             .route("/agent-r/receipts/issue", post(receipts_issue))
             .route("/agent-r/receipts/verify", post(receipts_verify));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:18555").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:18555")
+            .await
+            .unwrap();
         let srv = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
         // 1) issue
@@ -1238,7 +1328,10 @@ mod receipts_endpoint_tests {
         let v: serde_json::Value = serde_json::from_str(&resp).expect("issue responde JSON");
         let rid = v["id"].as_str().expect("id en receipt").to_string();
         assert!(v["sig_hex"].as_str().unwrap().len() == 64);
-        assert!(dir.join(".key").exists(), "clave persistida en el dir de test");
+        assert!(
+            dir.join(".key").exists(),
+            "clave persistida en el dir de test"
+        );
 
         // 2) verify con claim correcto (exit_code=0 está en el payload firmado)
         let ok_body = format!(

@@ -72,7 +72,9 @@ fn main() {
             };
             let what = match pos.get(2) {
                 Some(w) => w.to_string(),
-                None => die("falta <what>: la lección corta y concreta (es lo que matchea después)"),
+                None => {
+                    die("falta <what>: la lección corta y concreta (es lo que matchea después)")
+                }
             };
             let why = get("--why").unwrap_or_default();
             let sev = severity_of(&get("--severity").unwrap_or_else(|| "error".into()));
@@ -85,9 +87,11 @@ fn main() {
             let mut agent = open_agent();
             let id = agent.record_error(cat, sev, &op, &what, &why, &tag_refs, &prevention);
             let _ = agent.flush();
-            out(json_out, &serde_json::json!({"id": id, "ms": elapsed(t0)}), &format!(
-                "recordado id={id} ({:.1} ms)", elapsed(t0)
-            ));
+            out(
+                json_out,
+                &serde_json::json!({"id": id, "ms": elapsed(t0)}),
+                &format!("recordado id={id} ({:.1} ms)", elapsed(t0)),
+            );
         }
         "check" => {
             let op = match pos.get(1) {
@@ -107,17 +111,27 @@ fn main() {
             };
             let (hits, misses, w) = agent.tuning_stats();
             if json_out {
-                out(true, &serde_json::json!({
-                    "proceed": pf.proceed, "warnings": pf.warnings,
-                    "precautions": pf.precautions, "top_rules": pf.top_rules,
-                    "suggestion": pf.suggestion, "veto_reason": pf.veto_reason,
-                    "w_content": w, "hits": hits, "misses": misses, "ms": elapsed(t0),
-                }), "");
+                out(
+                    true,
+                    &serde_json::json!({
+                        "proceed": pf.proceed, "warnings": pf.warnings,
+                        "precautions": pf.precautions, "top_rules": pf.top_rules,
+                        "suggestion": pf.suggestion, "veto_reason": pf.veto_reason,
+                        "w_content": w, "hits": hits, "misses": misses, "ms": elapsed(t0),
+                    }),
+                    "",
+                );
                 return;
             }
             let mut s = String::new();
             if !pf.proceed {
-                s.push_str(&format!("⛔ VETO: {}\n   → {}\n", pf.veto_reason.as_deref().unwrap_or("regla crítica recurrente"), pf.suggestion.as_deref().unwrap_or("")));
+                s.push_str(&format!(
+                    "⛔ VETO: {}\n   → {}\n",
+                    pf.veto_reason
+                        .as_deref()
+                        .unwrap_or("regla crítica recurrente"),
+                    pf.suggestion.as_deref().unwrap_or("")
+                ));
             } else if !pf.warnings.is_empty() {
                 s.push_str("⚠️  advertencias:\n");
                 for w in &pf.warnings {
@@ -128,7 +142,12 @@ fn main() {
                 s.push_str("✓ sin lecciones previas para esta operación\n");
             }
             for r in &pf.top_rules {
-                s.push_str(&format!("  [{}] (score {:.1}) {}\n", r.id, r.score, truncate(&r.what, 90)));
+                s.push_str(&format!(
+                    "  [{}] (score {:.1}) {}\n",
+                    r.id,
+                    r.score,
+                    truncate(&r.what, 90)
+                ));
             }
             s.push_str(&format!("  ({:.1} ms)", elapsed(t0)));
             println!("{s}");
@@ -153,7 +172,9 @@ fn main() {
             }
         }
         "deprecate" => {
-            let id: u64 = pos.get(1).and_then(|s| s.parse().ok())
+            let id: u64 = pos
+                .get(1)
+                .and_then(|s| s.parse().ok())
                 .unwrap_or_else(|| die("uso: agentr deprecate <id> <reason>"));
             let reason: String = match pos.get(2) {
                 Some(r) => (*r).clone(),
@@ -162,8 +183,11 @@ fn main() {
             let mut agent = open_agent();
             let ok = agent.deprecate_error(id, &reason);
             let _ = agent.flush();
-            out(json_out, &serde_json::json!({"ok": ok, "ms": elapsed(t0)}),
-                &format!("deprecado {id}: {ok}"));
+            out(
+                json_out,
+                &serde_json::json!({"ok": ok, "ms": elapsed(t0)}),
+                &format!("deprecado {id}: {ok}"),
+            );
         }
         "stats" => {
             let agent = open_agent();
@@ -211,7 +235,11 @@ fn elapsed(t0: std::time::Instant) -> f64 {
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n { s.to_string() } else { format!("{}…", &s[..n]) }
+    if s.len() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..n])
+    }
 }
 
 fn out(json: bool, v: &serde_json::Value, text: &str) {
@@ -233,7 +261,10 @@ fn mcp_serve() -> ! {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
     let mut agent = open_agent();
-    eprintln!("agentr MCP listo (stdio, estado: {})", state_path().display());
+    eprintln!(
+        "agentr MCP listo (stdio, estado: {})",
+        state_path().display()
+    );
     loop {
         let mut line = String::new();
         if stdin.lock().read_line(&mut line).unwrap_or(0) == 0 {
@@ -288,8 +319,14 @@ fn mcp_serve() -> ! {
                     "agentr_check" => {
                         let op = a.get("operation").and_then(|o| o.as_str()).unwrap_or("");
                         let sit = a.get("situation").and_then(|o| o.as_str()).unwrap_or("");
-                        let tags: Vec<String> = a.get("tags").and_then(|t| t.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                        let tags: Vec<String> = a
+                            .get("tags")
+                            .and_then(|t| t.as_array())
+                            .map(|arr| {
+                                arr.iter()
+                                    .filter_map(|v| v.as_str().map(String::from))
+                                    .collect()
+                            })
                             .unwrap_or_default();
                         let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
                         if op.is_empty() {
@@ -306,7 +343,8 @@ fn mcp_serve() -> ! {
                                 "precautions": pf.precautions, "top_rules": pf.top_rules,
                                 "suggestion": pf.suggestion, "veto_reason": pf.veto_reason,
                                 "w_content": w,
-                            })).unwrap_or_else(|_| err_text("serialize"))
+                            }))
+                            .unwrap_or_else(|_| err_text("serialize"))
                         }
                     }
                     "agentr_remember" => {
@@ -315,16 +353,35 @@ fn mcp_serve() -> ! {
                         if op.is_empty() || what.is_empty() {
                             err_text("falta operation/what")
                         } else {
-                            let sev = severity_of(a.get("severity").and_then(|o| o.as_str()).unwrap_or("error"));
-                            let cat = category_of(a.get("category").and_then(|o| o.as_str()).unwrap_or("other"));
-                            let tags: Vec<String> = a.get("tags").and_then(|t| t.as_array())
-                                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                            let sev = severity_of(
+                                a.get("severity")
+                                    .and_then(|o| o.as_str())
+                                    .unwrap_or("error"),
+                            );
+                            let cat = category_of(
+                                a.get("category")
+                                    .and_then(|o| o.as_str())
+                                    .unwrap_or("other"),
+                            );
+                            let tags: Vec<String> = a
+                                .get("tags")
+                                .and_then(|t| t.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(String::from))
+                                        .collect()
+                                })
                                 .unwrap_or_default();
                             let tag_refs: Vec<&str> = tags.iter().map(|s| s.as_str()).collect();
-                            let id = agent.record_error(cat, sev, op, what,
+                            let id = agent.record_error(
+                                cat,
+                                sev,
+                                op,
+                                what,
                                 a.get("why").and_then(|o| o.as_str()).unwrap_or(""),
                                 &tag_refs,
-                                a.get("prevention").and_then(|o| o.as_str()).unwrap_or(""));
+                                a.get("prevention").and_then(|o| o.as_str()).unwrap_or(""),
+                            );
                             let _ = agent.flush();
                             format!("{{\"id\": {id}}}")
                         }
@@ -351,7 +408,8 @@ fn mcp_serve() -> ! {
                             "recorded": st.total_errors_recorded, "unique": st.unique_incidents,
                             "preflights": st.total_preflights, "blocked": st.prefights_blocked,
                             "tuning": {"hits": h, "misses": m, "w_content": w},
-                        })).unwrap_or_else(|_| err_text("serialize"))
+                        }))
+                        .unwrap_or_else(|_| err_text("serialize"))
                     }
                     _ => err_text(&format!("tool desconocida: {name}")),
                 };
@@ -359,7 +417,9 @@ fn mcp_serve() -> ! {
                     "content": [{"type": "text", "text": text}]
                 })
             }
-            other => serde_json::json!({"error": {"code": -32601, "message": format!("método desconocido: {other}")}}),
+            other => {
+                serde_json::json!({"error": {"code": -32601, "message": format!("método desconocido: {other}")}})
+            }
         };
         let resp = serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result});
         println!("{}", serde_json::to_string(&resp).unwrap_or_default());

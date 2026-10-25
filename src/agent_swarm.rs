@@ -261,7 +261,12 @@ impl AgentSwarm {
 
     /// Registra (o re-registra) un agente y devuelve su nombre canónico.
     /// Si `role` es None y el agente ya existía, conserva su rol previo.
-    pub fn register_agent(&self, name: &str, capabilities: &[&str], role: Option<SwarmRole>) -> String {
+    pub fn register_agent(
+        &self,
+        name: &str,
+        capabilities: &[&str],
+        role: Option<SwarmRole>,
+    ) -> String {
         let name = name.trim().to_string();
         let mut agents = self.agents.lock().unwrap();
         let now = now_secs();
@@ -433,18 +438,15 @@ impl AgentSwarm {
 
         let now = now_secs();
         let my_epoch = now_to_epoch(now);
-        match task.state.compare_exchange(
-            ST_READY,
-            ST_CLAIMED,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ) {
+        match task
+            .state
+            .compare_exchange(ST_READY, ST_CLAIMED, Ordering::SeqCst, Ordering::SeqCst)
+        {
             Ok(_) => { /* claim limpio */ }
             Err(current) if current == ST_CLAIMED => {
                 // Fallback: ¿el claim expiró (holder muerto o timeout vencido)?
-                let holder_dead =
-                    epoch_to_secs(task.claim_epoch.load(Ordering::SeqCst))
-                        < now - self.claim_timeout_s;
+                let holder_dead = epoch_to_secs(task.claim_epoch.load(Ordering::SeqCst))
+                    < now - self.claim_timeout_s;
                 if !holder_dead {
                     return ClaimResult::Taken;
                 }
@@ -469,7 +471,13 @@ impl AgentSwarm {
     /// Registra el resultado y una lección en la memoria compartida
     /// (`agent_r` lo presta el server; dedup de O4: resultados idénticos
     /// no duplican incidentes).
-    pub fn complete_task(&self, agent_r: &mut AgentR, task_id: u64, agent: &str, result: &str) -> bool {
+    pub fn complete_task(
+        &self,
+        agent_r: &mut AgentR,
+        task_id: u64,
+        agent: &str,
+        result: &str,
+    ) -> bool {
         let tasks = self.tasks.lock().unwrap();
         let task = match tasks.get(&task_id) {
             Some(t) => t,
@@ -554,12 +562,7 @@ impl AgentSwarm {
 
     /// Registrar un rol autoritativo (sólo el Coordinator puede fijarlo).
     /// Devuelve el rol efectivo del agente o None si no existe/no es coordinator.
-    pub fn set_role(
-        &self,
-        coordinator: &str,
-        agent: &str,
-        role: SwarmRole,
-    ) -> Option<SwarmRole> {
+    pub fn set_role(&self, coordinator: &str, agent: &str, role: SwarmRole) -> Option<SwarmRole> {
         let mut agents = self.agents.lock().unwrap();
         if agents.get(coordinator)?.role != SwarmRole::Coordinator {
             return None;
@@ -594,17 +597,13 @@ impl AgentSwarm {
         let validators_vivos = agents
             .values()
             .filter(|a| {
-                a.role == SwarmRole::Validator
-                    && now - a.last_heartbeat <= self.heartbeat_ttl_s
+                a.role == SwarmRole::Validator && now - a.last_heartbeat <= self.heartbeat_ttl_s
             })
             .count();
-        let min_votes =
-            min_votes.unwrap_or_else(|| validators_vivos.max(1));
+        let min_votes = min_votes.unwrap_or_else(|| validators_vivos.max(1));
         drop(agents);
 
-        let id = self
-            .next_proposal_id
-            .fetch_add(1, Ordering::SeqCst);
+        let id = self.next_proposal_id.fetch_add(1, Ordering::SeqCst);
         self.proposals.lock().unwrap().insert(
             id,
             Proposal {
@@ -741,8 +740,7 @@ impl AgentSwarm {
             agents
                 .values()
                 .filter(|a| {
-                    a.role == SwarmRole::Validator
-                        && now - a.last_heartbeat <= self.heartbeat_ttl_s
+                    a.role == SwarmRole::Validator && now - a.last_heartbeat <= self.heartbeat_ttl_s
                 })
                 .count()
         };
@@ -820,22 +818,20 @@ impl AgentSwarm {
     pub fn status(&self, agent_r: &AgentR) -> serde_json::Value {
         let tasks = self.tasks.lock().unwrap();
         let proposals = self.proposals.lock().unwrap();
-        let mut by_state: HashMap<String, usize> = [
-            "PENDING", "READY", "CLAIMED", "COMPLETED", "FAILED",
-        ]
-        .iter()
-        .map(|s| (s.to_string(), 0))
-        .collect();
+        let mut by_state: HashMap<String, usize> =
+            ["PENDING", "READY", "CLAIMED", "COMPLETED", "FAILED"]
+                .iter()
+                .map(|s| (s.to_string(), 0))
+                .collect();
         for t in tasks.values() {
             let key = format!("{:?}", state_from_u8(t.state.load(Ordering::SeqCst))).to_uppercase();
             *by_state.entry(key).or_insert(0) += 1;
         }
-        let mut proposals_by_state: HashMap<String, usize> = [
-            "VOTING", "ACCEPTED", "REJECTED", "STALLED",
-        ]
-        .iter()
-        .map(|s| (s.to_string(), 0))
-        .collect();
+        let mut proposals_by_state: HashMap<String, usize> =
+            ["VOTING", "ACCEPTED", "REJECTED", "STALLED"]
+                .iter()
+                .map(|s| (s.to_string(), 0))
+                .collect();
         for p in proposals.values() {
             let key = format!("{:?}", p.state).to_uppercase();
             *proposals_by_state.entry(key).or_insert(0) += 1;
@@ -870,7 +866,12 @@ impl AgentSwarm {
     /// TODO el swarm (no sólo del agente local — es una sola memoria).
     /// v2 (pendiente 2a): paridad con el scoring compuesto del endpoint
     /// /agent-r/preflight (mismo preflight_v2 + campos top-3/sugerencia).
-    pub fn preflight_shared(&self, agent_r: &mut AgentR, operation: &str, tags: &[&str]) -> serde_json::Value {
+    pub fn preflight_shared(
+        &self,
+        agent_r: &mut AgentR,
+        operation: &str,
+        tags: &[&str],
+    ) -> serde_json::Value {
         let r = agent_r.preflight_v2(operation, tags);
         serde_json::json!({
             "proceed": r.proceed,
@@ -944,7 +945,12 @@ mod tests {
         let sw = swarm();
         sw.register_agent("especialista", &[], None);
         sw.register_agent("otros", &[], None);
-        let tid = sw.submit_task("op_rara", "sólo el especialista", vec![], Some("especialista"));
+        let tid = sw.submit_task(
+            "op_rara",
+            "sólo el especialista",
+            vec![],
+            Some("especialista"),
+        );
         assert_eq!(sw.claim_task(tid, "otros"), ClaimResult::Reserved);
         assert_eq!(sw.claim_task(tid, "especialista"), ClaimResult::Claimed);
     }
@@ -1066,17 +1072,31 @@ mod tests {
         // Validator no propone
         assert!(sw.submit_proposal("val_a", "t", "b", "op", None).is_err());
         // Coordinator sí
-        let pid = sw.submit_proposal("coord", "plan", "hacer X", "op_x", None).unwrap();
+        let pid = sw
+            .submit_proposal("coord", "plan", "hacer X", "op_x", None)
+            .unwrap();
         // Executor no vota
-        assert_eq!(sw.vote_proposal(pid, "peon", true, "me parece"), VoteResult::NotAValidator);
+        assert_eq!(
+            sw.vote_proposal(pid, "peon", true, "me parece"),
+            VoteResult::NotAValidator
+        );
         // set_role sin coordinator => None
         assert!(sw.set_role("val_a", "peon", SwarmRole::Validator).is_none());
         // coordinator asciende al peon a validator => ahora vota.
         // Ojo: el quórum de la propuesta quedó fijado en 2 al crearse
         // (validators vivos entonces) => su voto cuenta pero no decide solo.
-        assert_eq!(sw.set_role("coord", "peon", SwarmRole::Validator), Some(SwarmRole::Validator));
-        assert_eq!(sw.vote_proposal(pid, "peon", true, "revisado"), VoteResult::Counted);
-        assert_eq!(sw.vote_proposal(pid, "val_a", true, "de acuerdo"), VoteResult::Decided);
+        assert_eq!(
+            sw.set_role("coord", "peon", SwarmRole::Validator),
+            Some(SwarmRole::Validator)
+        );
+        assert_eq!(
+            sw.vote_proposal(pid, "peon", true, "revisado"),
+            VoteResult::Counted
+        );
+        assert_eq!(
+            sw.vote_proposal(pid, "val_a", true, "de acuerdo"),
+            VoteResult::Decided
+        );
     }
 
     /// Ciclo feliz: propuesta -> 2 ACCEPT con razón -> Decided -> tarea
@@ -1085,16 +1105,29 @@ mod tests {
     fn test_proposal_accept_becomes_task() {
         let sw = swarm_roles();
         let mut ar = AgentR::new_ephemeral();
-        let pid = sw.submit_proposal("coord", "reindexar HNSW",
-            "reconstruir el índice tras el lote nuevo", "index_rebuild", None)
+        let pid = sw
+            .submit_proposal(
+                "coord",
+                "reindexar HNSW",
+                "reconstruir el índice tras el lote nuevo",
+                "index_rebuild",
+                None,
+            )
             .unwrap();
-        assert_eq!(sw.vote_proposal(pid, "val_a", true, "el drift lo justifica"),
-                   VoteResult::Counted);
-        assert_eq!(sw.vote_proposal(pid, "val_b", true, "medido: recall cayó 4%"),
-                   VoteResult::Decided);
+        assert_eq!(
+            sw.vote_proposal(pid, "val_a", true, "el drift lo justifica"),
+            VoteResult::Counted
+        );
+        assert_eq!(
+            sw.vote_proposal(pid, "val_b", true, "medido: recall cayó 4%"),
+            VoteResult::Decided
+        );
         // doble voto no: la propuesta ya está decidida => Closed (el chequeo
         // de estado precede al de duplicado; el duplicado también daría Closed)
-        assert_eq!(sw.vote_proposal(pid, "val_a", true, "otra vez"), VoteResult::Closed);
+        assert_eq!(
+            sw.vote_proposal(pid, "val_a", true, "otra vez"),
+            VoteResult::Closed
+        );
         // materializar -> tarea READY del pipeline existente
         let (tid, state) = sw.materialize_proposal(pid).unwrap();
         assert_eq!(state, ProposalState::Accepted);
@@ -1110,8 +1143,15 @@ mod tests {
     #[test]
     fn test_proposal_reject_archives_reasons() {
         let sw = swarm_roles();
-        let pid = sw.submit_proposal("coord", "borrar índice",
-            "drop y rebuild desde cero", "index_rebuild", None).unwrap();
+        let pid = sw
+            .submit_proposal(
+                "coord",
+                "borrar índice",
+                "drop y rebuild desde cero",
+                "index_rebuild",
+                None,
+            )
+            .unwrap();
         sw.vote_proposal(pid, "val_a", false, "costo>beneficio: 40 min de rebuild");
         sw.vote_proposal(pid, "val_b", false, "el incremental cubre el mismo gap");
         let st = sw.proposal_status(pid).unwrap();
@@ -1119,7 +1159,10 @@ mod tests {
         assert_eq!(st["votes"].as_array().unwrap().len(), 2);
         assert!(st["votes"][0]["reason"].as_str().unwrap().len() > 0);
         // no materializa
-        assert_eq!(sw.materialize_proposal(pid).unwrap().1, ProposalState::Rejected);
+        assert_eq!(
+            sw.materialize_proposal(pid).unwrap().1,
+            ProposalState::Rejected
+        );
     }
 
     /// Voto en empate técnico (1-1 con quórum 2) => no hay mayoría => REJECTED
@@ -1127,7 +1170,9 @@ mod tests {
     #[test]
     fn test_proposal_tie_defaults_to_reject() {
         let sw = swarm_roles();
-        let pid = sw.submit_proposal("coord", "cambio riesgoso", "b", "op", None).unwrap();
+        let pid = sw
+            .submit_proposal("coord", "cambio riesgoso", "b", "op", None)
+            .unwrap();
         sw.vote_proposal(pid, "val_a", true, "a favor");
         sw.vote_proposal(pid, "val_b", false, "en contra");
         assert_eq!(sw.proposal_status(pid).unwrap()["state"], "REJECTED");
@@ -1140,14 +1185,19 @@ mod tests {
         sw.register_agent("coord", &[], Some(SwarmRole::Coordinator));
         sw.register_agent("val_a", &[], Some(SwarmRole::Validator));
         sw.register_agent("val_b", &[], Some(SwarmRole::Validator));
-        let pid = sw.submit_proposal("coord", "plan", "b", "op", None).unwrap();
+        let pid = sw
+            .submit_proposal("coord", "plan", "b", "op", None)
+            .unwrap();
         sw.vote_proposal(pid, "val_a", true, "ok");
         std::thread::sleep(std::time::Duration::from_millis(80));
         // ambos validators muertos => quórum imposible
         assert_eq!(sw.close_stalled(), 1);
         assert_eq!(sw.proposal_status(pid).unwrap()["state"], "STALLED");
         // y los votos tardíos no reabren nada
-        assert_eq!(sw.vote_proposal(pid, "val_b", true, "tardío"), VoteResult::UnknownAgent);
+        assert_eq!(
+            sw.vote_proposal(pid, "val_b", true, "tardío"),
+            VoteResult::UnknownAgent
+        );
     }
 
     /// Propuesta con min_votes explícito menor al pool de validators
@@ -1155,8 +1205,13 @@ mod tests {
     #[test]
     fn test_proposal_min_votes_explicit() {
         let sw = swarm_roles();
-        let pid = sw.submit_proposal("coord", "hotfix", "b", "op", Some(1)).unwrap();
-        assert_eq!(sw.vote_proposal(pid, "val_a", true, "urgente"), VoteResult::Decided);
+        let pid = sw
+            .submit_proposal("coord", "hotfix", "b", "op", Some(1))
+            .unwrap();
+        assert_eq!(
+            sw.vote_proposal(pid, "val_a", true, "urgente"),
+            VoteResult::Decided
+        );
         let (tid, _) = sw.materialize_proposal(pid).unwrap();
         assert!(tid > 0);
     }

@@ -125,7 +125,8 @@ fn hmac_hex(key: &[u8], msg: &[u8]) -> String {
 fn verify_sig(key: &[u8], msg: &[u8], sig_hex: &str) -> bool {
     match hex::decode(sig_hex) {
         Ok(sig) => {
-            let mut mac = <HmacSha256 as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
+            let mut mac =
+                <HmacSha256 as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
             mac.update(msg);
             mac.verify_slice(&sig).is_ok()
         }
@@ -190,8 +191,7 @@ impl ReceiptStore {
             hex::decode(k.trim())
                 .map_err(|e| ReceiptError(format!("{} no es hex válido: {}", HMAC_KEY_ENV, e)))?
         } else if key_path.exists() {
-            std::fs::read(&key_path)
-                .map_err(|e| ReceiptError(format!("leer .key: {}", e)))?
+            std::fs::read(&key_path).map_err(|e| ReceiptError(format!("leer .key: {}", e)))?
         } else {
             let mut buf = [0u8; 32];
             getrandom_fill(&mut buf)?;
@@ -245,7 +245,8 @@ impl ReceiptStore {
         // 1970-01-01 = día 0; formato YYYYMMDD sin librería de fechas:
         // conversión días→(y,m,d) por el algoritmo civil de Howard Hinnant.
         let (y, m, d) = civil_from_days(days as i64);
-        self.dir.join(format!("receipts-{:04}{:02}{:02}.jsonl", y, m, d))
+        self.dir
+            .join(format!("receipts-{:04}{:02}{:02}.jsonl", y, m, d))
     }
 
     fn append_to_disk(&self, r: &Receipt) -> Result<(), ReceiptError> {
@@ -288,8 +289,8 @@ impl ReceiptStore {
             if scanned.contains(&path) {
                 continue;
             }
-            let f = File::open(&path)
-                .map_err(|e| ReceiptError(format!("abrir {:?}: {}", path, e)))?;
+            let f =
+                File::open(&path).map_err(|e| ReceiptError(format!("abrir {:?}: {}", path, e)))?;
             for line in BufReader::new(f).lines() {
                 let line = line.map_err(|e| ReceiptError(format!("leer línea: {}", e)))?;
                 if line.trim().is_empty() {
@@ -337,11 +338,7 @@ impl ReceiptStore {
     /// Verifica un receipt contra un claim `{receipt_id, claim:{metric,value}}`.
     /// Re-verifica la firma y que el claim esté respaldado por el payload
     /// (existe una clave `metric` con ese valor exacto, en cualquier nivel).
-    pub fn verify_claim(
-        &self,
-        receipt_id: &str,
-        claim: &serde_json::Value,
-    ) -> VerifyResult {
+    pub fn verify_claim(&self, receipt_id: &str, claim: &serde_json::Value) -> VerifyResult {
         let base = self.verify_receipt(receipt_id);
         if !base.valid {
             return base;
@@ -395,12 +392,16 @@ impl ReceiptStore {
         };
         match self.verify_claim(receipt_id, claim) {
             VerifyResult { valid: true, .. } => N3Verdict::Pass,
-            VerifyResult { valid: false, reason, .. } if reason.starts_with("firma inválida") => {
-                N3Verdict::Fail
-            }
-            VerifyResult { valid: false, reason, .. } if reason.starts_with("claim") || reason.starts_with("Claim") => {
-                N3Verdict::Fail
-            }
+            VerifyResult {
+                valid: false,
+                reason,
+                ..
+            } if reason.starts_with("firma inválida") => N3Verdict::Fail,
+            VerifyResult {
+                valid: false,
+                reason,
+                ..
+            } if reason.starts_with("claim") || reason.starts_with("Claim") => N3Verdict::Fail,
             VerifyResult { valid: false, .. } => N3Verdict::Unverifiable,
         }
     }
@@ -443,9 +444,7 @@ fn value_matches(payload: &serde_json::Value, metric: &str, value: &serde_json::
             }
             map.values().any(|v| value_matches(v, metric, value))
         }
-        serde_json::Value::Array(items) => {
-            items.iter().any(|v| value_matches(v, metric, value))
-        }
+        serde_json::Value::Array(items) => items.iter().any(|v| value_matches(v, metric, value)),
         _ => false,
     }
 }
@@ -555,7 +554,11 @@ mod tests {
         let mut tampered = r.clone();
         tampered.sig_hex = format!("{}0", &tampered.sig_hex[..63]); // 64 chars, wrong
         let path = dir.join(day_filename(&r));
-        std::fs::write(&path, format!("{}\n", serde_json::to_string(&tampered).unwrap())).unwrap();
+        std::fs::write(
+            &path,
+            format!("{}\n", serde_json::to_string(&tampered).unwrap()),
+        )
+        .unwrap();
         let store2 = ReceiptStore::open_no_env(&dir).unwrap();
         assert!(!store2.verify_receipt(&r.id).valid);
     }
@@ -569,7 +572,9 @@ mod tests {
         assert!(v.reason.contains("no encontrado"));
         // n3_check: ausente → Unverifiable
         assert_eq!(
-            store.n3_check(&serde_json::json!({"receipt_id": "nope", "claim": {"metric": "x", "value": 1}})),
+            store.n3_check(
+                &serde_json::json!({"receipt_id": "nope", "claim": {"metric": "x", "value": 1}})
+            ),
             N3Verdict::Unverifiable
         );
     }
@@ -591,7 +596,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(dir.join(".key")).unwrap().permissions().mode();
+            let mode = std::fs::metadata(dir.join(".key"))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
     }
@@ -621,7 +629,10 @@ mod tests {
         // borrar .key y regenerar → clave distinta → firma inválida
         std::fs::remove_file(dir.join(".key")).unwrap();
         let store2 = ReceiptStore::open_no_env(&dir).unwrap();
-        assert!(!store2.verify_receipt(&r.id).valid, "otra clave no debe verificar");
+        assert!(
+            !store2.verify_receipt(&r.id).valid,
+            "otra clave no debe verificar"
+        );
     }
 
     #[test]
@@ -713,18 +724,17 @@ mod tests {
         let elapsed = start.elapsed();
         let per_op_us = elapsed.as_micros() as f64 / n as f64;
         let per_op_ms = per_op_us / 1000.0;
-        println!("PERF issue: {} ops en {:?} → {:.4} ms/op", n, elapsed, per_op_ms);
+        println!(
+            "PERF issue: {} ops en {:?} → {:.4} ms/op",
+            n, elapsed, per_op_ms
+        );
         assert!(
             per_op_ms < 15.0,
             "perf issue {:.4} ms/op >= 15 ms target",
             per_op_ms
         );
         // reportar también para el parser del reporte
-        std::fs::write(
-            dir.join("perf.txt"),
-            format!("{:.6}\n", per_op_ms),
-        )
-        .unwrap();
+        std::fs::write(dir.join("perf.txt"), format!("{:.6}\n", per_op_ms)).unwrap();
     }
 
     #[test]

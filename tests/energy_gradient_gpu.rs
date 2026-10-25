@@ -66,10 +66,16 @@ fn energy_gradient_gpu_matches_cpu() {
     let x = queries_near_centers(&mu, n, d, b, 20261016);
 
     // CPU de referencia: la EBMEnergy REAL del repo (no un puerto).
-    let api = EBMEnergy::with_splats(mu_arr, ndarray::Array1::from(alpha.clone()), ndarray::Array1::from(kappa.clone()));
+    let api = EBMEnergy::with_splats(
+        mu_arr,
+        ndarray::Array1::from(alpha.clone()),
+        ndarray::Array1::from(kappa.clone()),
+    );
     let x_arr = Array2::from_shape_vec((b, d), x.clone()).unwrap();
     let e_cpu = api.energy_batch(&x_arr);
-    let g_cpu: Vec<Vec<f32>> = (0..b).map(|q| api.energy_gradient(&x[q * d..(q + 1) * d])).collect();
+    let g_cpu: Vec<Vec<f32>> = (0..b)
+        .map(|q| api.energy_gradient(&x[q * d..(q + 1) * d]))
+        .collect();
 
     // GPU
     let Some(gpu) = EnergyGpu::new(&mu, &alpha, &kappa, n, d) else {
@@ -81,7 +87,12 @@ fn energy_gradient_gpu_matches_cpu() {
     // Energía: tolerancia 1e-5 (fast math, |E| ~ O(1))
     for q in 0..b {
         let diff = (e_cpu[q] - e_gpu[q]).abs();
-        assert!(diff < 1e-5, "E[{q}]: cpu={} gpu={} diff={diff:.2e}", e_cpu[q], e_gpu[q]);
+        assert!(
+            diff < 1e-5,
+            "E[{q}]: cpu={} gpu={} diff={diff:.2e}",
+            e_cpu[q],
+            e_gpu[q]
+        );
     }
     // Gradiente: tolerancia 1e-3 (consenso del brief; medido 1.2e-7)
     let mut max_diff: f32 = 0.0;
@@ -91,6 +102,9 @@ fn energy_gradient_gpu_matches_cpu() {
             max_diff = max_diff.max(diff);
         }
     }
-    assert!(max_diff < 1e-3, "gradiente max_abs_diff={max_diff:.2e} >= 1e-3");
+    assert!(
+        max_diff < 1e-3,
+        "gradiente max_abs_diff={max_diff:.2e} >= 1e-3"
+    );
     eprintln!("[test] OK: max_abs_diff gradiente = {max_diff:.2e} (n={n}, d={d}, b={b})");
 }

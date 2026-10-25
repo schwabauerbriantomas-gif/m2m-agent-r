@@ -15,9 +15,11 @@
 //!   G_d = sum_i 2*kappa_i*w_i*(x_d - mu_i_d) / Z   (0 if Z <= 1e-10)
 //!   E   = -log(Z)                                  (10.0 if Z <= 1e-10)
 
-use std::sync::Arc;
-use cudarc::driver::{CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{
+    CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
+};
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions, Ptx};
+use std::sync::Arc;
 
 pub const KERNEL_SRC: &str = include_str!("../../kernels/energy_gradient.cu");
 
@@ -97,18 +99,23 @@ impl EnergyGpu {
         let alpha_gpu = stream.clone_htod(alpha).ok()?;
         let kappa_gpu = stream.clone_htod(kappa).ok()?;
 
-        Some(EnergyGpu { ctx, stream, func, mu_gpu, alpha_gpu, kappa_gpu, n, d })
+        Some(EnergyGpu {
+            ctx,
+            stream,
+            func,
+            mu_gpu,
+            alpha_gpu,
+            kappa_gpu,
+            n,
+            d,
+        })
     }
 
     /// Fused E+G for a batch of queries. Returns (E[B], G[B*D]).
     ///
     /// `with_transfers`: time H2D+D2H inside this call (bench flag). When
     /// false, x must already be resident — use [upload_x] + [launch].
-    pub fn energy_gradient_batch(
-        &self,
-        x: &[f32],
-        b: usize,
-    ) -> Option<(Vec<f32>, Vec<f32>)> {
+    pub fn energy_gradient_batch(&self, x: &[f32], b: usize) -> Option<(Vec<f32>, Vec<f32>)> {
         assert_eq!(x.len(), b * self.d);
         let x_gpu = self.stream.clone_htod(x).ok()?;
         let mut e_gpu = self.stream.alloc_zeros::<f32>(b).ok()?;

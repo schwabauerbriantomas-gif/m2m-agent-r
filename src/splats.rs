@@ -3,7 +3,13 @@
 
 /// Compute squared L2 distance between two slices.
 fn l2_distance_sq(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b.iter()).map(|(x, y)| { let d = x - y; d * d }).sum()
+    a.iter()
+        .zip(b.iter())
+        .map(|(x, y)| {
+            let d = x - y;
+            d * d
+        })
+        .sum()
 }
 
 /// Compute L2 distance between two slices.
@@ -71,9 +77,15 @@ impl SplatStore {
                 projections: config.quant_projections,
                 seed: 42,
                 algorithm: match config.quant_algorithm {
-                    crate::config::QuantAlgorithm::TurboQuant => crate::quantization::QuantAlgorithm::TurboQuant,
-                    crate::config::QuantAlgorithm::PolarQuant => crate::quantization::QuantAlgorithm::PolarQuant,
-                    crate::config::QuantAlgorithm::None => crate::quantization::QuantAlgorithm::TurboQuant,
+                    crate::config::QuantAlgorithm::TurboQuant => {
+                        crate::quantization::QuantAlgorithm::TurboQuant
+                    }
+                    crate::config::QuantAlgorithm::PolarQuant => {
+                        crate::quantization::QuantAlgorithm::PolarQuant
+                    }
+                    crate::config::QuantAlgorithm::None => {
+                        crate::quantization::QuantAlgorithm::TurboQuant
+                    }
                 },
             };
             crate::quantization::QuantizedStore::new(dim, qcfg).ok()
@@ -132,7 +144,11 @@ impl SplatStore {
             return false;
         }
         if x.ncols() != self.mu.ncols() {
-            eprintln!("Dimension mismatch: expected {}, got {}", self.mu.ncols(), x.ncols());
+            eprintln!(
+                "Dimension mismatch: expected {}, got {}",
+                self.mu.ncols(),
+                x.ncols()
+            );
             return false;
         }
         if self.n_active + n_new > self.max_splats {
@@ -195,7 +211,10 @@ impl SplatStore {
         // Try HNSW first (fastest approximate search)
         if let Some(ref hnsw) = self.hnsw {
             let hresults = hnsw.search(query.clone(), k);
-            return hresults.indices.iter().zip(hresults.distances.iter())
+            return hresults
+                .indices
+                .iter()
+                .zip(hresults.distances.iter())
                 .filter(|(&idx, _)| idx < n)
                 .take(k)
                 .map(|(&idx, &dist)| NeighborResult {
@@ -212,7 +231,9 @@ impl SplatStore {
         if let Some(ref lsh) = self.lsh {
             let (indices, dists) = lsh.query(query, k);
             if !indices.is_empty() {
-                return indices.iter().zip(dists.iter())
+                return indices
+                    .iter()
+                    .zip(dists.iter())
                     .filter(|(&idx, _)| idx < n)
                     .take(k)
                     .map(|(&idx, &dist)| NeighborResult {
@@ -229,11 +250,17 @@ impl SplatStore {
         // Fallback: linear scan
         let dists_sq: Vec<f32> = index_data
             .outer_iter()
-            .map(|row| l2_distance_sq(row.as_slice().unwrap_or(&[]), query.as_slice().unwrap_or(&[])))
+            .map(|row| {
+                l2_distance_sq(
+                    row.as_slice().unwrap_or(&[]),
+                    query.as_slice().unwrap_or(&[]),
+                )
+            })
             .collect();
 
         // Partial sort top-k
-        let mut indexed: Vec<(f32, usize)> = dists_sq.iter().enumerate().map(|(i, &d)| (d, i)).collect();
+        let mut indexed: Vec<(f32, usize)> =
+            dists_sq.iter().enumerate().map(|(i, &d)| (d, i)).collect();
         if k < indexed.len() {
             indexed.select_nth_unstable_by(k, |a, b| a.0.partial_cmp(&b.0).unwrap());
         }
@@ -264,7 +291,8 @@ impl SplatStore {
         let index_data = self.mu.slice(ndarray::s![..n, ..]);
 
         // Collect candidate sets from each enabled backend
-        let mut candidates: std::collections::HashMap<usize, f32> = std::collections::HashMap::new();
+        let mut candidates: std::collections::HashMap<usize, f32> =
+            std::collections::HashMap::new();
         let mut has_index = false;
 
         // 1. HNSW search (primary)
@@ -272,7 +300,10 @@ impl SplatStore {
             let hresults = hnsw.search(query.clone(), k * 2);
             for (idx, dist) in hresults.indices.iter().zip(hresults.distances.iter()) {
                 if *idx < n {
-                    candidates.entry(*idx).and_modify(|d| *d = (*d).min(*dist)).or_insert(*dist);
+                    candidates
+                        .entry(*idx)
+                        .and_modify(|d| *d = (*d).min(*dist))
+                        .or_insert(*dist);
                 }
             }
             has_index = true;
@@ -283,7 +314,10 @@ impl SplatStore {
             let (indices, dists) = lsh.query(query, k * 2);
             for (idx, dist) in indices.iter().zip(dists.iter()) {
                 if *idx < n {
-                    candidates.entry(*idx).and_modify(|d| *d = (*d).min(*dist)).or_insert(*dist);
+                    candidates
+                        .entry(*idx)
+                        .and_modify(|d| *d = (*d).min(*dist))
+                        .or_insert(*dist);
                 }
             }
             has_index = true;
@@ -295,7 +329,10 @@ impl SplatStore {
             for (id, dist) in qresults {
                 let idx = id as usize;
                 if idx < n {
-                    candidates.entry(idx).and_modify(|d| *d = (*d).min(dist)).or_insert(dist);
+                    candidates
+                        .entry(idx)
+                        .and_modify(|d| *d = (*d).min(dist))
+                        .or_insert(dist);
                 }
             }
             has_index = true;
@@ -304,7 +341,10 @@ impl SplatStore {
         // 4. Linear scan fallback — only if no indexes are available
         if !has_index {
             for i in 0..n {
-                let dist = l2_distance(index_data.row(i).as_slice().unwrap_or(&[]), query.as_slice().unwrap_or(&[]));
+                let dist = l2_distance(
+                    index_data.row(i).as_slice().unwrap_or(&[]),
+                    query.as_slice().unwrap_or(&[]),
+                );
                 candidates.insert(i, dist);
             }
         }
@@ -329,18 +369,29 @@ impl SplatStore {
     }
 
     /// Check if quantization subsystem is active.
-    pub fn has_quantization(&self) -> bool { self.quant_store.is_some() }
+    pub fn has_quantization(&self) -> bool {
+        self.quant_store.is_some()
+    }
     /// Check if HNSW index is active.
-    pub fn has_hnsw(&self) -> bool { self.hnsw.is_some() }
+    pub fn has_hnsw(&self) -> bool {
+        self.hnsw.is_some()
+    }
     /// Check if LSH index is active.
-    pub fn has_lsh(&self) -> bool { self.lsh.is_some() }
+    pub fn has_lsh(&self) -> bool {
+        self.lsh.is_some()
+    }
     /// Check if semantic memory is enabled in this preset.
     /// Note: SemanticMemoryDB must be managed externally (it wraps its own SplatStore).
-    pub fn has_semantic_memory(&self) -> bool { self.config.enable_semantic_memory }
+    pub fn has_semantic_memory(&self) -> bool {
+        self.config.enable_semantic_memory
+    }
 
     /// Set a persistence callback invoked after mutations (add_splat, compact, etc).
     /// The callback receives (operation_name, n_affected) and should log to WAL, etc.
-    pub fn set_persist_callback(&mut self, cb: Box<dyn Fn(&str, usize) -> Result<(), String> + Send + Sync>) {
+    pub fn set_persist_callback(
+        &mut self,
+        cb: Box<dyn Fn(&str, usize) -> Result<(), String> + Send + Sync>,
+    ) {
         self.on_persist = Some(cb);
     }
 
@@ -354,8 +405,14 @@ impl SplatStore {
     }
 
     /// Batch find neighbors for multiple queries.
-    pub fn find_neighbors_batch(&self, queries: &Array2<f32>, k: usize) -> Vec<Vec<NeighborResult>> {
-        (0..queries.nrows()).map(|i| self.find_neighbors(&queries.row(i), k)).collect()
+    pub fn find_neighbors_batch(
+        &self,
+        queries: &Array2<f32>,
+        k: usize,
+    ) -> Vec<Vec<NeighborResult>> {
+        (0..queries.nrows())
+            .map(|i| self.find_neighbors(&queries.row(i), k))
+            .collect()
     }
 
     /// Find neighbors with validation. Returns error on invalid input.
@@ -364,9 +421,15 @@ impl SplatStore {
         query: &ArrayView1<f32>,
         k: usize,
     ) -> Result<Vec<NeighborResult>, String> {
-        if k < 1 { return Err("k must be >= 1".into()); }
+        if k < 1 {
+            return Err("k must be >= 1".into());
+        }
         if query.len() != self.config.latent_dim {
-            return Err(format!("Query dimension mismatch: expected {}, got {}", self.config.latent_dim, query.len()));
+            return Err(format!(
+                "Query dimension mismatch: expected {}, got {}",
+                self.config.latent_dim,
+                query.len()
+            ));
         }
         if !query.iter().all(|v| v.is_finite()) {
             return Err("Query vector contains NaN or Inf".into());
@@ -424,8 +487,14 @@ impl SplatStore {
 
     /// Get active frequency values.
     pub fn get_frequency(&self) -> Option<Array1<f32>> {
-        if self.n_active == 0 { return None; }
-        Some(self.frequency.slice(ndarray::s![..self.n_active]).to_owned())
+        if self.n_active == 0 {
+            return None;
+        }
+        Some(
+            self.frequency
+                .slice(ndarray::s![..self.n_active])
+                .to_owned(),
+        )
     }
 
     /// Shannon entropy of the kappa distribution.
@@ -438,14 +507,27 @@ impl SplatStore {
         if total <= 0.0 {
             return 0.0;
         }
-        let h: f32 = kappa.iter().filter(|&&k| k > 0.0).map(|&k| { let p = k / total; -p * p.ln() }).sum();
+        let h: f32 = kappa
+            .iter()
+            .filter(|&&k| k > 0.0)
+            .map(|&k| {
+                let p = k / total;
+                -p * p.ln()
+            })
+            .sum();
         let max_h = (self.n_active as f32).ln();
-        if max_h <= 0.0 { 0.0 } else { (h / max_h).clamp(0.0, 1.0) }
+        if max_h <= 0.0 {
+            0.0
+        } else {
+            (h / max_h).clamp(0.0, 1.0)
+        }
     }
 
     /// Remove invalid splats (alpha ~0, NaN/Inf in mu).
     pub fn compact(&mut self) {
-        if self.n_active == 0 { return; }
+        if self.n_active == 0 {
+            return;
+        }
         let n = self.n_active;
         let mut write_idx = 0;
         for read_idx in 0..n {
@@ -482,24 +564,34 @@ impl SplatStore {
         }
     }
 
-    pub fn n_active(&self) -> usize { self.n_active }
-    pub fn max_splats(&self) -> usize { self.max_splats }
+    pub fn n_active(&self) -> usize {
+        self.n_active
+    }
+    pub fn max_splats(&self) -> usize {
+        self.max_splats
+    }
 
     /// Get active mu vectors (n_active × dim slice).
     pub fn get_mu(&self) -> Option<Array2<f32>> {
-        if self.n_active == 0 { return None; }
+        if self.n_active == 0 {
+            return None;
+        }
         Some(self.mu.slice(ndarray::s![..self.n_active, ..]).to_owned())
     }
 
     /// Get active alpha values.
     pub fn get_alpha(&self) -> Option<Array1<f32>> {
-        if self.n_active == 0 { return None; }
+        if self.n_active == 0 {
+            return None;
+        }
         Some(self.alpha.slice(ndarray::s![..self.n_active]).to_owned())
     }
 
     /// Get active kappa values.
     pub fn get_kappa(&self) -> Option<Array1<f32>> {
-        if self.n_active == 0 { return None; }
+        if self.n_active == 0 {
+            return None;
+        }
         Some(self.kappa.slice(ndarray::s![..self.n_active]).to_owned())
     }
 
@@ -550,11 +642,9 @@ impl SplatStore {
 
         // Load splat centroids as mu
         let n = splats.len();
-        let mu_arr = Array2::from_shape_vec(
-            (n, dim),
-            splats.iter().flat_map(|s| s.mu.clone()).collect(),
-        )
-        .unwrap();
+        let mu_arr =
+            Array2::from_shape_vec((n, dim), splats.iter().flat_map(|s| s.mu.clone()).collect())
+                .unwrap();
         let alpha_arr: Vec<f32> = splats.iter().map(|s| s.alpha as f32).collect();
         let kappa_arr: Vec<f32> = splats.iter().map(|s| s.kappa as f32).collect();
 
@@ -607,11 +697,9 @@ impl SplatStore {
         }
 
         let n = splats.len();
-        let mu_arr = Array2::from_shape_vec(
-            (n, dim),
-            splats.iter().flat_map(|s| s.mu.clone()).collect(),
-        )
-        .unwrap();
+        let mu_arr =
+            Array2::from_shape_vec((n, dim), splats.iter().flat_map(|s| s.mu.clone()).collect())
+                .unwrap();
         let alpha_arr: Vec<f32> = splats.iter().map(|s| s.alpha as f32).collect();
         let kappa_arr: Vec<f32> = splats.iter().map(|s| s.kappa as f32).collect();
 
@@ -666,10 +754,9 @@ impl SplatStore {
         }
 
         let n = splats.len();
-        let mu_arr = Array2::from_shape_vec(
-            (n, dim),
-            splats.iter().flat_map(|s| s.mu.clone()).collect(),
-        ).unwrap();
+        let mu_arr =
+            Array2::from_shape_vec((n, dim), splats.iter().flat_map(|s| s.mu.clone()).collect())
+                .unwrap();
         let alpha_arr: Vec<f32> = splats.iter().map(|s| s.alpha as f32).collect();
         let kappa_arr: Vec<f32> = splats.iter().map(|s| s.kappa as f32).collect();
 
@@ -712,7 +799,11 @@ mod tests {
         let query = normalized.row(0).to_owned();
         let results = store.find_neighbors(&query.view(), 5);
         assert_eq!(results.len(), 5);
-        assert!(results[0].distance < 0.01, "First neighbor should be near-identical, got dist={}", results[0].distance);
+        assert!(
+            results[0].distance < 0.01,
+            "First neighbor should be near-identical, got dist={}",
+            results[0].distance
+        );
         assert_eq!(results[0].index, 0);
     }
 
@@ -732,7 +823,11 @@ mod tests {
         let data = Array2::ones((10, 64));
         store.add_splat(&data);
         let e = store.entropy();
-        assert!(e > 0.0 && e <= 1.0, "Entropy should be in (0, 1], got {}", e);
+        assert!(
+            e > 0.0 && e <= 1.0,
+            "Entropy should be in (0, 1], got {}",
+            e
+        );
     }
 
     #[test]

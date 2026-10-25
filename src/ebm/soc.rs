@@ -28,7 +28,10 @@ impl CriticalityReport {
         self.state == CriticalityState::Supercritical
     }
     pub fn needs_monitoring(&self) -> bool {
-        matches!(self.state, CriticalityState::Critical | CriticalityState::Supercritical)
+        matches!(
+            self.state,
+            CriticalityState::Critical | CriticalityState::Supercritical
+        )
     }
 }
 
@@ -91,12 +94,14 @@ impl SOCEngine {
         self.splat_kappa = Some(kappa.clone());
 
         // Rebuild clusters (one per splat, simplified)
-        self.clusters = (0..n).map(|i| Cluster {
-            center_idx: i,
-            energy: alpha[i],
-            size: 1,
-            splat_indices: vec![i],
-        }).collect();
+        self.clusters = (0..n)
+            .map(|i| Cluster {
+                center_idx: i,
+                energy: alpha[i],
+                size: 1,
+                splat_indices: vec![i],
+            })
+            .collect();
 
         // Update energy API
         self.energy_api.update_splats(mu, alpha, kappa);
@@ -143,9 +148,14 @@ impl SOCEngine {
 
         // Find seed: highest energy cluster or specified seed
         let start_idx = seed_point.unwrap_or_else(|| {
-            self.clusters.iter()
+            self.clusters
+                .iter()
                 .enumerate()
-                .max_by(|a, b| a.1.energy.partial_cmp(&b.1.energy).unwrap_or(std::cmp::Ordering::Equal))
+                .max_by(|a, b| {
+                    a.1.energy
+                        .partial_cmp(&b.1.energy)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
                 .map(|(i, _)| i)
                 .unwrap_or(0)
         });
@@ -161,7 +171,9 @@ impl SOCEngine {
         visited[start_idx] = true;
 
         while let Some(idx) = queue.pop_front() {
-            if affected.len() >= max_cascade { break; }
+            if affected.len() >= max_cascade {
+                break;
+            }
 
             let cluster_energy = self.clusters[idx].energy;
             if cluster_energy > self.critical_threshold {
@@ -172,7 +184,11 @@ impl SOCEngine {
                 // Get neighbors (simplified: closest by mu distance)
                 let neighbors = self.get_neighbor_indices(idx);
 
-                let share = if neighbors.is_empty() { 0.0 } else { released / neighbors.len() as f32 };
+                let share = if neighbors.is_empty() {
+                    0.0
+                } else {
+                    released / neighbors.len() as f32
+                };
                 for &n_idx in &neighbors {
                     self.clusters[n_idx].energy += share;
                     if !visited[n_idx] && self.clusters[n_idx].energy > self.critical_threshold {
@@ -198,8 +214,11 @@ impl SOCEngine {
         }
 
         // Update energy API
-        if let (Some(mu), Some(alpha), Some(kappa)) = (&self.splat_mu, &self.splat_alpha, &self.splat_kappa) {
-            self.energy_api.update_splats(mu.clone(), alpha.clone(), kappa.clone());
+        if let (Some(mu), Some(alpha), Some(kappa)) =
+            (&self.splat_mu, &self.splat_alpha, &self.splat_kappa)
+        {
+            self.energy_api
+                .update_splats(mu.clone(), alpha.clone(), kappa.clone());
         }
 
         let new_eq = self.compute_equilibrium();
@@ -249,8 +268,11 @@ impl SOCEngine {
         }
 
         // Update energy API
-        if let (Some(mu), Some(alpha), Some(kappa)) = (&self.splat_mu, &self.splat_alpha, &self.splat_kappa) {
-            self.energy_api.update_splats(mu.clone(), alpha.clone(), kappa.clone());
+        if let (Some(mu), Some(alpha), Some(kappa)) =
+            (&self.splat_mu, &self.splat_alpha, &self.splat_kappa)
+        {
+            self.energy_api
+                .update_splats(mu.clone(), alpha.clone(), kappa.clone());
         }
 
         let final_energy = self.energy_api.free_energy();
@@ -265,23 +287,34 @@ impl SOCEngine {
     }
 
     fn compute_energy_variance(&self) -> f32 {
-        if self.clusters.is_empty() { return 0.0; }
+        if self.clusters.is_empty() {
+            return 0.0;
+        }
         let energies: Vec<f32> = self.clusters.iter().map(|c| c.energy).collect();
         let mean = energies.iter().sum::<f32>() / energies.len() as f32;
-        let variance = energies.iter().map(|e| (e - mean) * (e - mean)).sum::<f32>() / energies.len() as f32;
+        let variance = energies
+            .iter()
+            .map(|e| (e - mean) * (e - mean))
+            .sum::<f32>()
+            / energies.len() as f32;
         variance
     }
 
     fn compute_size_variance(&self) -> f32 {
-        if self.clusters.is_empty() { return 0.0; }
+        if self.clusters.is_empty() {
+            return 0.0;
+        }
         let sizes: Vec<f32> = self.clusters.iter().map(|c| c.size as f32).collect();
         let mean = sizes.iter().sum::<f32>() / sizes.len() as f32;
-        let variance = sizes.iter().map(|s| (s - mean) * (s - mean)).sum::<f32>() / sizes.len() as f32;
+        let variance =
+            sizes.iter().map(|s| (s - mean) * (s - mean)).sum::<f32>() / sizes.len() as f32;
         variance
     }
 
     fn compute_equilibrium(&self) -> f32 {
-        if self.clusters.is_empty() { return 0.0; }
+        if self.clusters.is_empty() {
+            return 0.0;
+        }
         self.clusters.iter().map(|c| c.energy).sum::<f32>() / self.clusters.len() as f32
     }
 
@@ -291,7 +324,9 @@ impl SOCEngine {
             Some(m) => m,
             None => return vec![],
         };
-        if idx >= mu.nrows() { return vec![]; }
+        if idx >= mu.nrows() {
+            return vec![];
+        }
 
         let center = mu.row(idx);
         let mut dists: Vec<(f32, usize)> = (0..mu.nrows())

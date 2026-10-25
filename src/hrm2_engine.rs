@@ -55,7 +55,13 @@ pub struct HRM2Engine {
 }
 
 impl HRM2Engine {
-    pub fn new(n_coarse: usize, n_fine: usize, embedding_dim: usize, n_probe: usize, metric: &str) -> Self {
+    pub fn new(
+        n_coarse: usize,
+        n_fine: usize,
+        embedding_dim: usize,
+        n_probe: usize,
+        metric: &str,
+    ) -> Self {
         Self {
             n_coarse,
             n_fine,
@@ -114,7 +120,9 @@ impl HRM2Engine {
             let scales = Array2::from_shape_vec((n, dim), sca_data).unwrap();
             let rotations = Array2::from_shape_vec((n, 4), rot_data).unwrap();
 
-            let mut e = self.encoder.build(&positions, &colors, &opacities, &scales, &rotations);
+            let mut e = self
+                .encoder
+                .build(&positions, &colors, &opacities, &scales, &rotations);
             if self.metric == "cosine" {
                 Self::normalize_rows(&mut e);
             }
@@ -142,7 +150,9 @@ impl HRM2Engine {
         self.cluster_embeddings.clear();
 
         for c in 0..n_coarse {
-            let indices: Vec<usize> = coarse_labels.iter().enumerate()
+            let indices: Vec<usize> = coarse_labels
+                .iter()
+                .enumerate()
                 .filter(|(_, &label)| label == c)
                 .map(|(i, _)| i)
                 .collect();
@@ -151,8 +161,10 @@ impl HRM2Engine {
 
             if indices.len() < 2 {
                 self.fine_models.insert(c, KMeans::new(1, 10, 42));
-                self.fine_assignments.insert(c, Array1::zeros(indices.len()));
-                self.cluster_embeddings.insert(c, Array2::zeros((0, self.embedding_dim)));
+                self.fine_assignments
+                    .insert(c, Array1::zeros(indices.len()));
+                self.cluster_embeddings
+                    .insert(c, Array2::zeros((0, self.embedding_dim)));
                 continue;
             }
 
@@ -167,7 +179,8 @@ impl HRM2Engine {
             let mut fine = KMeans::new(n_fine, 50, 42 + c as u64);
             fine.fit(&cluster_embs);
             self.fine_models.insert(c, fine.clone());
-            self.fine_assignments.insert(c, fine.labels.clone().unwrap());
+            self.fine_assignments
+                .insert(c, fine.labels.clone().unwrap());
         }
 
         self.is_indexed = true;
@@ -221,7 +234,9 @@ impl HRM2Engine {
                             candidates.push((idx, dist));
                         }
                     }
-                    if candidates.len() >= k { break; }
+                    if candidates.len() >= k {
+                        break;
+                    }
                 }
             }
             1 => {
@@ -238,7 +253,11 @@ impl HRM2Engine {
                         .min_by(|a, b| fine_dists[*a].partial_cmp(&fine_dists[*b]).unwrap())
                         .unwrap();
 
-                    let indices = self.cluster_indices.get(&c).map(|v| v.as_slice()).unwrap_or(&[]);
+                    let indices = self
+                        .cluster_indices
+                        .get(&c)
+                        .map(|v| v.as_slice())
+                        .unwrap_or(&[]);
                     let fine_assigns: &[usize] = match self.fine_assignments.get(&c) {
                         Some(a) => a.as_slice().unwrap_or(&[]),
                         None => &[],
@@ -250,7 +269,9 @@ impl HRM2Engine {
                             candidates.push((global_i, dist));
                         }
                     }
-                    if candidates.len() >= k { break; }
+                    if candidates.len() >= k {
+                        break;
+                    }
                 }
             }
             _ => {
@@ -278,20 +299,32 @@ impl HRM2Engine {
         self.stats.total_queries += 1;
         let query_us = start.elapsed().as_micros() as f64;
         let n = self.stats.total_queries;
-        self.stats.avg_query_time_us = self.stats.avg_query_time_us * ((n - 1) as f64) / (n as f64) + query_us / (n as f64);
+        self.stats.avg_query_time_us =
+            self.stats.avg_query_time_us * ((n - 1) as f64) / (n as f64) + query_us / (n as f64);
 
         candidates
     }
 
     /// Batch query for multiple queries.
-    pub fn query_batch(&mut self, queries: &Array2<f32>, k: usize, lod: usize) -> Vec<Vec<(usize, f32)>> {
+    pub fn query_batch(
+        &mut self,
+        queries: &Array2<f32>,
+        k: usize,
+        lod: usize,
+    ) -> Vec<Vec<(usize, f32)>> {
         let n = queries.nrows();
-        (0..n).map(|i| self.query(&queries.row(i), k, lod)).collect()
+        (0..n)
+            .map(|i| self.query(&queries.row(i), k, lod))
+            .collect()
     }
 
-    pub fn get_stats(&self) -> &HRM2Stats { &self.stats }
+    pub fn get_stats(&self) -> &HRM2Stats {
+        &self.stats
+    }
 
-    pub fn is_indexed(&self) -> bool { self.is_indexed }
+    pub fn is_indexed(&self) -> bool {
+        self.is_indexed
+    }
 
     pub fn clear(&mut self) {
         self.splats.clear();
@@ -324,18 +357,42 @@ pub fn generate_test_splats(n: usize, seed: u64) -> Vec<GaussianSplat> {
     use rand::Rng;
     use rand::SeedableRng;
     let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
-    (0..n).map(|i| {
-        let mut position = [0.0f32; 3];
-        let mut color = [0.0f32; 3];
-        let mut scale = [0.0f32; 3];
-        let mut rotation = [0.0f32; 4];
-        for p in position.iter_mut() { *p = rng.gen::<f32>() * 10.0 - 5.0; }
-        for c in color.iter_mut() { *c = rng.gen::<f32>(); }
-        for s in scale.iter_mut() { *s = (-rng.gen::<f32>() * 2.0).exp(); }
-        for r in rotation.iter_mut() { *r = rng.gen::<f32>(); }
-        let norm: f32 = rotation.iter().map(|x| x * x).sum::<f32>().sqrt().max(1e-10);
-        for r in rotation.iter_mut() { *r /= norm; }
+    (0..n)
+        .map(|i| {
+            let mut position = [0.0f32; 3];
+            let mut color = [0.0f32; 3];
+            let mut scale = [0.0f32; 3];
+            let mut rotation = [0.0f32; 4];
+            for p in position.iter_mut() {
+                *p = rng.gen::<f32>() * 10.0 - 5.0;
+            }
+            for c in color.iter_mut() {
+                *c = rng.gen::<f32>();
+            }
+            for s in scale.iter_mut() {
+                *s = (-rng.gen::<f32>() * 2.0).exp();
+            }
+            for r in rotation.iter_mut() {
+                *r = rng.gen::<f32>();
+            }
+            let norm: f32 = rotation
+                .iter()
+                .map(|x| x * x)
+                .sum::<f32>()
+                .sqrt()
+                .max(1e-10);
+            for r in rotation.iter_mut() {
+                *r /= norm;
+            }
 
-        GaussianSplat { id: i as u64, position, color, opacity: rng.gen::<f32>(), scale, rotation }
-    }).collect()
+            GaussianSplat {
+                id: i as u64,
+                position,
+                color,
+                opacity: rng.gen::<f32>(),
+                scale,
+                rotation,
+            }
+        })
+        .collect()
 }

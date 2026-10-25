@@ -1,13 +1,13 @@
 //! HNSW Index — Hierarchical Navigable Small World graph for ANN search.
 //! Native Rust implementation optimized for speed.
 
-use std::collections::{BinaryHeap, HashSet};
 use std::cmp::Ordering;
+use std::collections::{BinaryHeap, HashSet};
 
 use ndarray::{Array2, ArrayView1};
 use rand::Rng;
-use rand_chacha::ChaCha8Rng;
 use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 
 use crate::interfaces::{IndexSearchResult, VectorIndex};
 
@@ -20,25 +20,41 @@ pub static HNSW_DIST_COMPUTATIONS: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone, Copy, Debug)]
 struct DistIdx(f32, usize);
 
-impl PartialEq for DistIdx { fn eq(&self, other: &Self) -> bool { self.0 == other.0 } }
+impl PartialEq for DistIdx {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
 impl Eq for DistIdx {}
 impl PartialOrd for DistIdx {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 impl Ord for DistIdx {
-    fn cmp(&self, other: &Self) -> Ordering { other.0.partial_cmp(&self.0).unwrap_or(Ordering::Equal) }
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.0.partial_cmp(&self.0).unwrap_or(Ordering::Equal)
+    }
 }
 
 /// Max-heap wrapper (negate distance).
 #[derive(Clone, Copy, Debug)]
 struct MaxDistIdx(f32, usize);
-impl PartialEq for MaxDistIdx { fn eq(&self, other: &Self) -> bool { self.0 == other.0 } }
+impl PartialEq for MaxDistIdx {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
 impl Eq for MaxDistIdx {}
 impl PartialOrd for MaxDistIdx {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 impl Ord for MaxDistIdx {
-    fn cmp(&self, other: &Self) -> Ordering { self.0.partial_cmp(&other.0).unwrap_or(Ordering::Equal) }
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.partial_cmp(&other.0).unwrap_or(Ordering::Equal)
+    }
 }
 
 /// A node in the HNSW graph.
@@ -111,10 +127,16 @@ impl HNSWIndex {
             let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
             let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
             let denom = na * nb;
-            if denom < 1e-10 { return 1.0; }
+            if denom < 1e-10 {
+                return 1.0;
+            }
             1.0 - dot / denom
         } else {
-            a.iter().zip(b.iter()).map(|(x, y)| (x - y) * (x - y)).sum::<f32>().sqrt()
+            a.iter()
+                .zip(b.iter())
+                .map(|(x, y)| (x - y) * (x - y))
+                .sum::<f32>()
+                .sqrt()
         }
     }
 
@@ -125,9 +147,13 @@ impl HNSWIndex {
         loop {
             let mut changed = false;
             let node = &self.nodes[current];
-            if level >= node.neighbors.len() { break; }
+            if level >= node.neighbors.len() {
+                break;
+            }
             for &neighbor in &node.neighbors[level] {
-                if self.removed.contains(&neighbor) { continue; }
+                if self.removed.contains(&neighbor) {
+                    continue;
+                }
                 let d = self.distance(query, &self.vectors[neighbor]);
                 if d < current_dist {
                     current_dist = d;
@@ -135,7 +161,9 @@ impl HNSWIndex {
                     changed = true;
                 }
             }
-            if !changed { break; }
+            if !changed {
+                break;
+            }
         }
         current
     }
@@ -162,10 +190,14 @@ impl HNSWIndex {
                 Some(MaxDistIdx(d, _)) => *d,
                 None => break,
             };
-            if dist_c > farthest { break; }
+            if dist_c > farthest {
+                break;
+            }
 
             let node = &self.nodes[c];
-            if level >= node.neighbors.len() { continue; }
+            if level >= node.neighbors.len() {
+                continue;
+            }
 
             for &neighbor in &node.neighbors[level] {
                 if visited.contains(&neighbor) || self.removed.contains(&neighbor) {
@@ -224,21 +256,21 @@ impl HNSWIndex {
             let m = self.m;
 
             // Select M closest neighbors
-            let selected: Vec<usize> = candidates.iter()
-                .take(m)
-                .map(|(_, idx)| *idx)
-                .collect();
+            let selected: Vec<usize> = candidates.iter().take(m).map(|(_, idx)| *idx).collect();
 
             // Set bidirectional connections
             self.nodes[idx].neighbors[lev] = selected.clone();
             for &neighbor_idx in &selected {
                 let n_vec = self.vectors[neighbor_idx].clone();
-                let neighbor_ids: Vec<(f32, usize)> = self.nodes[neighbor_idx].neighbors[lev].iter()
+                let neighbor_ids: Vec<(f32, usize)> = self.nodes[neighbor_idx].neighbors[lev]
+                    .iter()
                     .map(|&ni| (self.distance(&n_vec, &self.vectors[ni]), ni))
                     .collect();
 
                 let node = &mut self.nodes[neighbor_idx];
-                if lev >= node.neighbors.len() { continue; }
+                if lev >= node.neighbors.len() {
+                    continue;
+                }
                 if !node.neighbors[lev].contains(&idx) {
                     node.neighbors[lev].push(idx);
                 }
@@ -277,7 +309,10 @@ impl VectorIndex for HNSWIndex {
 
     fn search(&self, query: ArrayView1<f32>, k: usize) -> IndexSearchResult {
         if self.vectors.is_empty() {
-            return IndexSearchResult { indices: vec![], distances: vec![] };
+            return IndexSearchResult {
+                indices: vec![],
+                distances: vec![],
+            };
         }
 
         let q: Vec<f32> = query.to_vec();
@@ -292,7 +327,8 @@ impl VectorIndex for HNSWIndex {
         // Phase 2: search at layer 0
         let candidates = self.search_layer(&q, ep, ef, 0);
 
-        let results: Vec<(f32, usize)> = candidates.into_iter()
+        let results: Vec<(f32, usize)> = candidates
+            .into_iter()
             .filter(|(_, idx)| !self.removed.contains(idx))
             .take(k)
             .collect();

@@ -51,18 +51,18 @@ fn main() {
     let mut gate_violations: u64 = 0; // (a) y (b): W sube sin receipt legítimo del store
 
     let run = |cat: &str,
-                   receipt_op: Option<&str>,
-                   store: &ReceiptStore,
-                   agent: &mut AgentR,
-                   attempts: &mut std::collections::BTreeMap<String, u64>,
-                   w_by_cat: &mut std::collections::BTreeMap<String, f64>,
-                   promoted_by_cat: &mut std::collections::BTreeMap<String, u64>,
-                   outcomes: &mut std::collections::BTreeMap<
+               receipt_op: Option<&str>,
+               store: &ReceiptStore,
+               agent: &mut AgentR,
+               attempts: &mut std::collections::BTreeMap<String, u64>,
+               w_by_cat: &mut std::collections::BTreeMap<String, f64>,
+               promoted_by_cat: &mut std::collections::BTreeMap<String, u64>,
+               outcomes: &mut std::collections::BTreeMap<
         String,
         std::collections::BTreeMap<String, u64>,
     >,
-                   total_attempts: &mut u64,
-                   gate_violations: &mut u64| {
+               total_attempts: &mut u64,
+               gate_violations: &mut u64| {
         let w_before = agent.tuning_stats().2;
         let (outcome, w_after, promoted) =
             agent.tuning_feedback_star(Some(1), Some(1), store, receipt_op);
@@ -92,19 +92,49 @@ fn main() {
     // --- Categorías de ataque (orden fijo, determinista) ---
     // 1. none (20)
     for _ in 0..20 {
-        run("none", None, &store, &mut agent, &mut attempts, &mut w_by_cat,
-            &mut promoted_by_cat, &mut outcomes, &mut total_attempts, &mut gate_violations);
+        run(
+            "none",
+            None,
+            &store,
+            &mut agent,
+            &mut attempts,
+            &mut w_by_cat,
+            &mut promoted_by_cat,
+            &mut outcomes,
+            &mut total_attempts,
+            &mut gate_violations,
+        );
     }
     // 2. empty (20)
     for _ in 0..20 {
-        run("empty", Some(""), &store, &mut agent, &mut attempts, &mut w_by_cat,
-            &mut promoted_by_cat, &mut outcomes, &mut total_attempts, &mut gate_violations);
+        run(
+            "empty",
+            Some(""),
+            &store,
+            &mut agent,
+            &mut attempts,
+            &mut w_by_cat,
+            &mut promoted_by_cat,
+            &mut outcomes,
+            &mut total_attempts,
+            &mut gate_violations,
+        );
     }
     // 3. nonexistent (30)
     for i in 0..30 {
         let rid = format!("rcpt_fuzz_{}", i);
-        run("nonexistent", Some(&rid), &store, &mut agent, &mut attempts, &mut w_by_cat,
-            &mut promoted_by_cat, &mut outcomes, &mut total_attempts, &mut gate_violations);
+        run(
+            "nonexistent",
+            Some(&rid),
+            &store,
+            &mut agent,
+            &mut attempts,
+            &mut w_by_cat,
+            &mut promoted_by_cat,
+            &mut outcomes,
+            &mut total_attempts,
+            &mut gate_violations,
+        );
     }
     // 4. other_store (30): receipts REALES de un store con otra key HMAC
     let other_ids: Vec<String> = (0..30)
@@ -116,8 +146,18 @@ fn main() {
         })
         .collect();
     for rid in &other_ids {
-        run("other_store", Some(rid), &store, &mut agent, &mut attempts, &mut w_by_cat,
-            &mut promoted_by_cat, &mut outcomes, &mut total_attempts, &mut gate_violations);
+        run(
+            "other_store",
+            Some(rid),
+            &store,
+            &mut agent,
+            &mut attempts,
+            &mut w_by_cat,
+            &mut promoted_by_cat,
+            &mut outcomes,
+            &mut total_attempts,
+            &mut gate_violations,
+        );
     }
     // 5. truncated (20): id legítimo truncado (rompe el sufijo de firma)
     let trunc_ids: Vec<String> = (0..20)
@@ -129,8 +169,18 @@ fn main() {
         })
         .collect();
     for rid in &trunc_ids {
-        run("truncated", Some(rid), &store, &mut agent, &mut attempts, &mut w_by_cat,
-            &mut promoted_by_cat, &mut outcomes, &mut total_attempts, &mut gate_violations);
+        run(
+            "truncated",
+            Some(rid),
+            &store,
+            &mut agent,
+            &mut attempts,
+            &mut w_by_cat,
+            &mut promoted_by_cat,
+            &mut outcomes,
+            &mut total_attempts,
+            &mut gate_violations,
+        );
     }
     // 6. reuse_valid_x50 (50): el MISMO receipt válido re-verificado 50 veces
     //    + otros 10 intentos 'extra_none' para completar 200 exactos
@@ -140,8 +190,18 @@ fn main() {
         .id;
     let w_pre_reuse = agent.tuning_stats().2;
     for _ in 0..50 {
-        run("reuse_valid_x50", Some(&reused), &store, &mut agent, &mut attempts, &mut w_by_cat,
-            &mut promoted_by_cat, &mut outcomes, &mut total_attempts, &mut gate_violations);
+        run(
+            "reuse_valid_x50",
+            Some(&reused),
+            &store,
+            &mut agent,
+            &mut attempts,
+            &mut w_by_cat,
+            &mut promoted_by_cat,
+            &mut outcomes,
+            &mut total_attempts,
+            &mut gate_violations,
+        );
     }
     let w_post_reuse = agent.tuning_stats().2;
     // 7. legit (20)
@@ -150,16 +210,36 @@ fn main() {
             .issue(&json!({"outcome": "hit", "op": "fuzz_legit", "i": i}))
             .unwrap()
             .id;
-        run("legit", Some(&rid), &store, &mut agent, &mut attempts, &mut w_by_cat,
-            &mut promoted_by_cat, &mut outcomes, &mut total_attempts, &mut gate_violations);
+        run(
+            "legit",
+            Some(&rid),
+            &store,
+            &mut agent,
+            &mut attempts,
+            &mut w_by_cat,
+            &mut promoted_by_cat,
+            &mut outcomes,
+            &mut total_attempts,
+            &mut gate_violations,
+        );
     }
     // 8. reuse_after_legit (10): re-use del MISMO receipt legítimo tras la
     //    categoría legit — confirma que el vector (c) persiste con W ya alto
     //    y completa los 200 intentos exactos del protocolo.
     let w_pre_r2 = agent.tuning_stats().2;
     for _ in 0..10 {
-        run("reuse_after_legit", Some(&reused), &store, &mut agent, &mut attempts, &mut w_by_cat,
-            &mut promoted_by_cat, &mut outcomes, &mut total_attempts, &mut gate_violations);
+        run(
+            "reuse_after_legit",
+            Some(&reused),
+            &store,
+            &mut agent,
+            &mut attempts,
+            &mut w_by_cat,
+            &mut promoted_by_cat,
+            &mut outcomes,
+            &mut total_attempts,
+            &mut gate_violations,
+        );
     }
     let w_post_r2 = agent.tuning_stats().2;
     assert_eq!(total_attempts, 200);
@@ -222,7 +302,10 @@ fn main() {
 
     // Resumen stdout
     println!("=== T2 STaR gate fuzz ===");
-    println!("total_attempts={} gate_violations={}", total_attempts, gate_violations);
+    println!(
+        "total_attempts={} gate_violations={}",
+        total_attempts, gate_violations
+    );
     for (cat, n) in &attempts {
         println!(
             "{:>16}: attempts={:3} promoted={:3} ΔW_sum={:+.6}",

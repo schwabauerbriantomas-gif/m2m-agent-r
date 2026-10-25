@@ -195,9 +195,9 @@ fn now_secs() -> f64 {
 /// cambia acá o ahí, el híbrido deja de reproducir los números del bench.
 fn tokenize_words(text: &str) -> Vec<String> {
     const STOP: [&str; 26] = [
-        "the", "and", "for", "not", "are", "was", "were", "been", "its",
-        "with", "from", "you", "your", "there", "that", "this", "those",
-        "these", "can", "will", "just", "but", "has", "had", "into", "out",
+        "the", "and", "for", "not", "are", "was", "were", "been", "its", "with", "from", "you",
+        "your", "there", "that", "this", "those", "these", "can", "will", "just", "but", "has",
+        "had", "into", "out",
     ];
     text.to_lowercase()
         .split(|c: char| !c.is_ascii_lowercase())
@@ -459,8 +459,7 @@ struct FlushHandle {
 /// Usada por el writer background y por `flush()` síncrono.
 fn write_json_atomic(path: &std::path::Path, json: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
+        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {}", parent.display(), e))?;
     }
     // Nombre tmp EXCLUSIVO por escritor: dos flushes concurrentes (writer
     // background + endpoint /agent-r/flush) con el mismo tmp se pisaban
@@ -469,7 +468,10 @@ fn write_json_atomic(path: &std::path::Path, json: &str) -> Result<(), String> {
     let tmp = path.with_extension(format!(
         "json.tmp.{}-{}",
         std::process::id(),
-        std::thread::current().name().unwrap_or("t").replace(['/', '\\'], "_")
+        std::thread::current()
+            .name()
+            .unwrap_or("t")
+            .replace(['/', '\\'], "_")
     ));
     {
         let mut f =
@@ -478,7 +480,8 @@ fn write_json_atomic(path: &std::path::Path, json: &str) -> Result<(), String> {
             .map_err(|e| format!("write {}: {}", tmp.display(), e))?;
         f.sync_all().ok();
     }
-    fs::rename(&tmp, path).map_err(|e| format!("rename {}->{}: {}", tmp.display(), path.display(), e))
+    fs::rename(&tmp, path)
+        .map_err(|e| format!("rename {}->{}: {}", tmp.display(), path.display(), e))
 }
 
 /// FNV-1a 64-bit: hash de fingerprint estable entre procesos y versiones de
@@ -498,7 +501,11 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// dedup falso solo fusionaría dos incidentes idénticos en la práctica).
 /// FNV-1a de texto libre (insights/skills dedup).
 fn hash_fingerprint_text(text: &str) -> u64 {
-    let norm: String = text.to_lowercase().chars().filter(|c| !c.is_whitespace() || *c == ' ').collect();
+    let norm: String = text
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace() || *c == ' ')
+        .collect();
     let mut h: u64 = 0xcbf29ce484222325;
     for b in norm.trim().as_bytes() {
         h ^= *b as u64;
@@ -672,7 +679,11 @@ fn spawn_flusher() -> FlushHandle {
             }
         })
         .expect("spawn agent-r-flusher");
-    FlushHandle { tx, committed_gen, write_lock }
+    FlushHandle {
+        tx,
+        committed_gen,
+        write_lock,
+    }
 }
 
 impl Drop for AgentR {
@@ -851,7 +862,9 @@ impl AgentR {
     /// corresponde (debounce por tiempo o por nº de ops). No bloquea: si la
     /// cola está llena, la próxima op elegible reintenta.
     fn persist_snapshot(&mut self) {
-        let Some(path) = self.state_path.clone() else { return };
+        let Some(path) = self.state_path.clone() else {
+            return;
+        };
         self.ops_since_flush += 1;
         self.snapshot_gen += 1;
         let now = now_secs();
@@ -891,14 +904,19 @@ impl AgentR {
     /// WARN único por racha de fallos (evita log-spam por POST).
     fn warn_flush_once(&mut self, e: &str) {
         if !self.flush_warned {
-            eprintln!("[agent-r] WARN: snapshot flush failed: {} (se reintentará)", e);
+            eprintln!(
+                "[agent-r] WARN: snapshot flush failed: {} (se reintentará)",
+                e
+            );
             self.flush_warned = true;
         }
     }
 
     /// Serialize the state snapshot (used by persist + tests).
     fn snapshot_json(&self) -> Result<String, serde_json::Error> {
-        let errors: Vec<PlainRecord> = self.errors.iter()
+        let errors: Vec<PlainRecord> = self
+            .errors
+            .iter()
             .map(|e| PlainRecord {
                 id: e.id,
                 timestamp: e.timestamp,
@@ -907,7 +925,9 @@ impl AgentR {
                 operation: self.resolve(e.operation).to_string(),
                 what: e.what.to_string(),
                 why: e.why.to_string(),
-                context_tags: e.context_tags.iter()
+                context_tags: e
+                    .context_tags
+                    .iter()
                     .map(|t| self.resolve(*t).to_string())
                     .collect(),
                 prevention: e.prevention.to_string(),
@@ -929,32 +949,44 @@ impl AgentR {
             w_content: Some(self.w_content),
             tuning_hits: Some(self.tuning_hits),
             tuning_misses: Some(self.tuning_misses),
-            successes: self.successes.iter().map(|s| PlainSuccessRecord {
-                id: s.id,
-                timestamp: s.timestamp,
-                operation: self.resolve(s.operation).to_string(),
-                result: s.result.to_string(),
-                receipt_id: s.receipt_id.clone(),
-            }).collect(),
-            insights: self.insights.iter().map(|i| PlainInsightRecord {
-                id: i.id,
-                timestamp: i.timestamp,
-                operation: self.resolve(i.operation).to_string(),
-                insight: i.insight.to_string(),
-                derived_from: i.derived_from.clone(),
-                confirmations: i.confirmations,
-                deprecated: i.deprecated,
-            }).collect(),
-            skills: self.skills.iter().map(|s| PlainSkillRecord {
-                id: s.id,
-                timestamp: s.timestamp,
-                operation: self.resolve(s.operation).to_string(),
-                name: s.name.to_string(),
-                body: s.body.to_string(),
-                receipt_id: s.receipt_id.clone(),
-                times_used: s.times_used,
-                deprecated: s.deprecated,
-            }).collect(),
+            successes: self
+                .successes
+                .iter()
+                .map(|s| PlainSuccessRecord {
+                    id: s.id,
+                    timestamp: s.timestamp,
+                    operation: self.resolve(s.operation).to_string(),
+                    result: s.result.to_string(),
+                    receipt_id: s.receipt_id.clone(),
+                })
+                .collect(),
+            insights: self
+                .insights
+                .iter()
+                .map(|i| PlainInsightRecord {
+                    id: i.id,
+                    timestamp: i.timestamp,
+                    operation: self.resolve(i.operation).to_string(),
+                    insight: i.insight.to_string(),
+                    derived_from: i.derived_from.clone(),
+                    confirmations: i.confirmations,
+                    deprecated: i.deprecated,
+                })
+                .collect(),
+            skills: self
+                .skills
+                .iter()
+                .map(|s| PlainSkillRecord {
+                    id: s.id,
+                    timestamp: s.timestamp,
+                    operation: self.resolve(s.operation).to_string(),
+                    name: s.name.to_string(),
+                    body: s.body.to_string(),
+                    receipt_id: s.receipt_id.clone(),
+                    times_used: s.times_used,
+                    deprecated: s.deprecated,
+                })
+                .collect(),
             promoted_receipts: self.promoted_receipts.iter().cloned().collect(),
             questions: self.questions.clone(),
         })
@@ -984,12 +1016,14 @@ impl AgentR {
         }
         // OPT-O3 x OPT-O4: el snapshot viaja en strings => re-internar cada
         // record contra el pool (rebuild_plain_record) y reparar legacy.
-        self.errors = snap.errors.into_iter()
+        self.errors = snap
+            .errors
+            .into_iter()
             .map(|r| self.rebuild_plain_record(r))
             .collect();
-        self.next_id = snap.next_id.max(
-            self.errors.iter().map(|e| e.id).max().unwrap_or(0) + 1,
-        );
+        self.next_id = snap
+            .next_id
+            .max(self.errors.iter().map(|e| e.id).max().unwrap_or(0) + 1);
         self.stats = snap.stats;
         // Self-tuning: restaurar W y contadores si el snapshot los trae
         // (snapshots v1 no los tienen => quedan los de fábrica).
@@ -999,33 +1033,45 @@ impl AgentR {
         self.tuning_hits = snap.tuning_hits.unwrap_or(self.tuning_hits);
         self.tuning_misses = snap.tuning_misses.unwrap_or(self.tuning_misses);
         // Memoria de éxitos (R03): re-internar contra el pool reconstruido.
-        self.successes = snap.successes.into_iter().map(|s| SuccessRecord {
-            id: s.id,
-            timestamp: s.timestamp,
-            operation: self.intern(&s.operation),
-            result: s.result.into_boxed_str(),
-            receipt_id: s.receipt_id,
-        }).collect();
+        self.successes = snap
+            .successes
+            .into_iter()
+            .map(|s| SuccessRecord {
+                id: s.id,
+                timestamp: s.timestamp,
+                operation: self.intern(&s.operation),
+                result: s.result.into_boxed_str(),
+                receipt_id: s.receipt_id,
+            })
+            .collect();
         // Insights/skills (Capa 2): mismo tratamiento v1-compat.
-        self.insights = snap.insights.into_iter().map(|i| InsightRecord {
-            id: i.id,
-            timestamp: i.timestamp,
-            operation: self.intern(&i.operation),
-            insight: i.insight.into_boxed_str(),
-            derived_from: i.derived_from,
-            confirmations: i.confirmations,
-            deprecated: i.deprecated,
-        }).collect();
-        self.skills = snap.skills.into_iter().map(|s| SkillRecord {
-            id: s.id,
-            timestamp: s.timestamp,
-            operation: self.intern(&s.operation),
-            name: s.name.into_boxed_str(),
-            body: s.body.into_boxed_str(),
-            receipt_id: s.receipt_id,
-            times_used: s.times_used,
-            deprecated: s.deprecated,
-        }).collect();
+        self.insights = snap
+            .insights
+            .into_iter()
+            .map(|i| InsightRecord {
+                id: i.id,
+                timestamp: i.timestamp,
+                operation: self.intern(&i.operation),
+                insight: i.insight.into_boxed_str(),
+                derived_from: i.derived_from,
+                confirmations: i.confirmations,
+                deprecated: i.deprecated,
+            })
+            .collect();
+        self.skills = snap
+            .skills
+            .into_iter()
+            .map(|s| SkillRecord {
+                id: s.id,
+                timestamp: s.timestamp,
+                operation: self.intern(&s.operation),
+                name: s.name.into_boxed_str(),
+                body: s.body.into_boxed_str(),
+                receipt_id: s.receipt_id,
+                times_used: s.times_used,
+                deprecated: s.deprecated,
+            })
+            .collect();
         self.promoted_receipts = snap.promoted_receipts.into_iter().collect();
         self.questions = snap.questions;
         self.rebuild_recurrence_index();
@@ -1037,7 +1083,9 @@ impl AgentR {
     /// Debounce (pendiente 2a): escribe SÍNCRONAMENTE lo pendiente y marca la
     /// generación como comprometida (el writer background descarta jobs viejos).
     pub fn flush(&self) -> Result<(), String> {
-        let Some(path) = &self.state_path else { return Ok(()) };
+        let Some(path) = &self.state_path else {
+            return Ok(());
+        };
         let r = self.write_state_to(path);
         if let (Ok(()), Some(h)) = (&r, &self.flusher) {
             h.committed_gen.store(self.snapshot_gen, Ordering::Release);
@@ -1103,10 +1151,13 @@ impl AgentR {
             self.next_id = record.id + 1;
         }
         self.stats.total_errors_recorded += 1;
-        *self.stats.errors_by_category
+        *self
+            .stats
+            .errors_by_category
             .entry(format!("{:?}", record.category))
             .or_insert(0) += 1;
-        self.fingerprint_index.insert(record.fingerprint_hash, record.id);
+        self.fingerprint_index
+            .insert(record.fingerprint_hash, record.id);
         self.recurrence_index
             .entry((record.category, record.operation))
             .or_default()
@@ -1123,7 +1174,9 @@ impl AgentR {
     /// VecDeque: pop_front es O(1) — antes `Vec::remove(0)` memmove O(n).
     /// (pendiente 2a)
     fn evict_oldest(&mut self) {
-        let Some(evicted) = self.errors.pop_front() else { return };
+        let Some(evicted) = self.errors.pop_front() else {
+            return;
+        };
         let evict_key = (evicted.category, evicted.operation);
         if let Some(bucket) = self.recurrence_index.get_mut(&evict_key) {
             bucket.pop_front();
@@ -1177,8 +1230,16 @@ impl AgentR {
         context_tags: &[&str],
         prevention: &str,
     ) -> u64 {
-        self.record_error_dedup(category, severity, operation, what, why, context_tags, prevention)
-            .0
+        self.record_error_dedup(
+            category,
+            severity,
+            operation,
+            what,
+            why,
+            context_tags,
+            prevention,
+        )
+        .0
     }
 
     /// Same as `record_error` but also reports the dedup outcome
@@ -1296,7 +1357,9 @@ impl AgentR {
         };
 
         self.stats.total_errors_recorded += 1;
-        *self.stats.errors_by_category
+        *self
+            .stats
+            .errors_by_category
             .entry(format!("{:?}", category))
             .or_insert(0) += 1;
         self.fingerprint_index.insert(fph, id);
@@ -1320,11 +1383,8 @@ impl AgentR {
         if let Some(e) = self.errors.iter_mut().find(|e| e.id == id) {
             e.deprecated = true;
             e.deprecation_reason = Some(reason.to_string());
-            self.stats.unique_incidents = self
-                .errors
-                .iter()
-                .filter(|e| !e.deprecated)
-                .count() as u64;
+            self.stats.unique_incidents =
+                self.errors.iter().filter(|e| !e.deprecated).count() as u64;
             self.persist_snapshot();
             true
         } else {
@@ -1345,7 +1405,12 @@ impl AgentR {
     /// de n elementos por preflight (~1.6 MB @100k).
     pub fn recall_errors(&self, operation: &str, tags: &[&str]) -> Vec<&ErrorRecord> {
         const TOP: usize = 20;
-        let last_ts = self.errors.iter().next_back().map(|e| e.timestamp).unwrap_or(0.0);
+        let last_ts = self
+            .errors
+            .iter()
+            .next_back()
+            .map(|e| e.timestamp)
+            .unwrap_or(0.0);
 
         // OPT-O3: la operación de la query puede no estar internada (nunca
         // registrada) => si no está en el pool, no hay match exacto posible.
@@ -1359,7 +1424,8 @@ impl AgentR {
         // es el de índice MAYOR (el sort estable del código original conserva
         // índice menor), y un candidato con score empatado NUNCA desplaza a un
         // residente => salida idéntica a `sort_by` estable + take(20).
-        let mut heap: BinaryHeap<Reverse<(u64, Reverse<usize>)>> = BinaryHeap::with_capacity(TOP + 1);
+        let mut heap: BinaryHeap<Reverse<(u64, Reverse<usize>)>> =
+            BinaryHeap::with_capacity(TOP + 1);
 
         for (idx, e) in self.errors.iter().enumerate() {
             if e.deprecated {
@@ -1453,7 +1519,7 @@ impl AgentR {
         // RECENCIA(now): exponencial con half-life 24 h, acotada a ~6 días.
         let age_h = ((now - e.last_seen) / 3600.0).max(0.0);
         let recency = (-age_h / 24.0).exp() * 6.0; // 6.0 ahora -> ~0 en 6 días
-        // Score compuesto: α·similitud + β·recencia + γ·log(1+freq).
+                                                   // Score compuesto: α·similitud + β·recencia + γ·log(1+freq).
         1.0 * sim + 1.0 * recency + 2.0 * (1.0 + freq).ln()
     }
 
@@ -1509,18 +1575,26 @@ impl AgentR {
             let op_str = self.resolve(e.operation);
             if e.severity == ErrorSeverity::Critical && (e.recurrence as u64 + 1) >= 2 {
                 should_block = true;
-                let w = format!("BLOCKED: recurring critical rule [{}] {}: {}", e.id, op_str, e.what);
+                let w = format!(
+                    "BLOCKED: recurring critical rule [{}] {}: {}",
+                    e.id, op_str, e.what
+                );
                 if !warnings.contains(&w) {
                     warnings.push(w);
                 }
                 if veto_reason.is_none() {
                     veto_reason = Some(format!(
                         "rule {} [{}] critical, seen {}x, no open FPs",
-                        e.id, op_str, e.recurrence + 1
+                        e.id,
+                        op_str,
+                        e.recurrence + 1
                     ));
                 }
             } else if e.severity == ErrorSeverity::Critical {
-                let w = format!("WARNING: past critical rule [{}] {}: {}", e.id, op_str, e.what);
+                let w = format!(
+                    "WARNING: past critical rule [{}] {}: {}",
+                    e.id, op_str, e.what
+                );
                 if !warnings.contains(&w) {
                     warnings.push(w);
                 }
@@ -1658,7 +1732,13 @@ impl AgentR {
     /// Voyager: registrar un skill VERIFICADO (con receipt del run que lo
     /// ejecutó con éxito; sin receipt => times_used arranca en 0 y NO entra
     /// al recall de skills hasta su primera confirmación).
-    pub fn record_skill(&mut self, operation: &str, name: &str, body: &str, receipt_id: Option<String>) -> u64 {
+    pub fn record_skill(
+        &mut self,
+        operation: &str,
+        name: &str,
+        body: &str,
+        receipt_id: Option<String>,
+    ) -> u64 {
         let fp = hash_fingerprint_text(name);
         for s in self.skills.iter_mut() {
             if !s.deprecated && hash_fingerprint_text(&s.name) == fp {
@@ -1725,7 +1805,8 @@ impl AgentR {
             return Vec::new();
         }
         // Contar subsecuencias contiguas de largo `window`
-        let mut counts: std::collections::HashMap<Vec<InternedId>, usize> = std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<Vec<InternedId>, usize> =
+            std::collections::HashMap::new();
         for w in op_seq.windows(window) {
             *counts.entry(w.to_vec()).or_insert(0) += 1;
         }
@@ -1740,12 +1821,8 @@ impl AgentR {
             let body = format!("Workflow inducido de {n} éxitos verificados: {name}");
             // Reutiliza record_skill (dedup + gate de verificación: el
             // workflow nace con receipt implícito = los éxitos que lo forman).
-            let sid = self.record_skill(
-                &first_op,
-                &name,
-                &body,
-                Some(format!("awm:{}", now_secs())),
-            );
+            let sid =
+                self.record_skill(&first_op, &name, &body, Some(format!("awm:{}", now_secs())));
             created.push(sid);
         }
         created
@@ -1869,7 +1946,12 @@ impl AgentR {
     /// NUNCA en la de errores (los éxitos grabados como errores diluían el
     /// recall del preflight). `receipt_id` respalda el outcome cuando hay
     /// executor que firma (futuro: obligatorio para promover reglas).
-    pub fn record_success(&mut self, operation: &str, result: &str, receipt_id: Option<String>) -> u64 {
+    pub fn record_success(
+        &mut self,
+        operation: &str,
+        result: &str,
+        receipt_id: Option<String>,
+    ) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         let op_id = self.intern(operation);
@@ -1889,7 +1971,11 @@ impl AgentR {
     pub fn recall_successes(&self, operation: &str) -> Vec<&SuccessRecord> {
         let op_id = self.string_pool_index.get(operation).copied();
         match op_id {
-            Some(id) => self.successes.iter().filter(|s| s.operation == id).collect(),
+            Some(id) => self
+                .successes
+                .iter()
+                .filter(|s| s.operation == id)
+                .collect(),
             None => Vec::new(),
         }
     }
@@ -1949,7 +2035,11 @@ impl AgentR {
         best.map(|(_, id)| id)
     }
 
-    pub fn tuning_feedback(&mut self, predicted: Option<u64>, actual: Option<u64>) -> (&'static str, f64) {
+    pub fn tuning_feedback(
+        &mut self,
+        predicted: Option<u64>,
+        actual: Option<u64>,
+    ) -> (&'static str, f64) {
         let outcome = match (predicted, actual) {
             (None, _) => "abstain",
             (Some(p), Some(a)) if p == a => {
@@ -2026,7 +2116,9 @@ impl AgentR {
     /// dominios nuevos — las 3 semillas históricas de M2M no aplican y un veto
     /// heredado en un estado limpio confunde (visto en el smoke del CLI).
     pub fn no_seed(&self) -> bool {
-        std::env::var("AGENT_R_NO_SEED").map(|v| v == "1").unwrap_or(false)
+        std::env::var("AGENT_R_NO_SEED")
+            .map(|v| v == "1")
+            .unwrap_or(false)
     }
 
     /// Variante con W_content configurable (auto-tuning: un loop de feedback
@@ -2041,7 +2133,11 @@ impl AgentR {
     ) -> PreflightResultV2 {
         const W_CONTENT: f64 = 3.0;
         let _ = W_CONTENT; // referencia documental; el peso llega por parámetro
-        let w_content = if w_content.is_finite() && w_content > 0.0 { w_content } else { 0.0 };
+        let w_content = if w_content.is_finite() && w_content > 0.0 {
+            w_content
+        } else {
+            0.0
+        };
         let q_tokens: std::collections::HashSet<String> =
             tokenize_words(situation).into_iter().collect();
 
@@ -2053,11 +2149,9 @@ impl AgentR {
             .filter_map(|t| self.string_pool_index.get(*t).copied())
             .collect();
         // Token-sets de las reglas activas + df (corpus local, O(n)).
-        let active: Vec<&ErrorRecord> =
-            self.errors.iter().filter(|e| !e.deprecated).collect();
+        let active: Vec<&ErrorRecord> = self.errors.iter().filter(|e| !e.deprecated).collect();
         let n_rules = active.len() as f64;
-        let mut df: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut df: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         let rule_tokens: Vec<(u64, std::collections::HashSet<String>)> = active
             .iter()
             .map(|e| {
@@ -2070,7 +2164,10 @@ impl AgentR {
             })
             .collect();
         let token_of = |id: u64| -> Option<&std::collections::HashSet<String>> {
-            rule_tokens.iter().find(|(rid, _)| *rid == id).map(|(_, t)| t)
+            rule_tokens
+                .iter()
+                .find(|(rid, _)| *rid == id)
+                .map(|(_, t)| t)
         };
 
         // Canal de fallback: tokens del `why` COMPLETO (la lección entera).
@@ -2095,23 +2192,22 @@ impl AgentR {
             })
             .collect();
         let token_full_of = |id: u64| -> Option<&std::collections::HashSet<String>> {
-            rule_tokens_full.iter().find(|(rid, _)| *rid == id).map(|(_, t)| t)
+            rule_tokens_full
+                .iter()
+                .find(|(rid, _)| *rid == id)
+                .map(|(_, t)| t)
         };
 
         // score híbrido de TODAS las activas; heap top-3 idéntico a v2.
-        let mut heap: BinaryHeap<Reverse<(u64, Reverse<usize>)>> =
-            BinaryHeap::with_capacity(4);
-        let mut hybrid_of: std::collections::HashMap<u64, f64> =
-            std::collections::HashMap::new();
+        let mut heap: BinaryHeap<Reverse<(u64, Reverse<usize>)>> = BinaryHeap::with_capacity(4);
+        let mut hybrid_of: std::collections::HashMap<u64, f64> = std::collections::HashMap::new();
         for (idx, e) in active.iter().enumerate() {
             let base = self.preflight_v2_score(e, op_id, &tag_ids, now);
             let c_idf: f64 = token_of(e.id)
                 .map(|toks| {
                     toks.iter()
                         .filter(|t| q_tokens.contains(*t))
-                        .map(|t| {
-                            ((n_rules + 1.0) / (*df.get(t).unwrap_or(&0) as f64 + 0.5)).ln()
-                        })
+                        .map(|t| ((n_rules + 1.0) / (*df.get(t).unwrap_or(&0) as f64 + 0.5)).ln())
                         .sum()
                 })
                 .unwrap_or(0.0);
@@ -2126,8 +2222,7 @@ impl AgentR {
                         toks.iter()
                             .filter(|t| q_tokens.contains(*t))
                             .map(|t| {
-                                ((n_rules + 1.0)
-                                    / (*df_full.get(t).unwrap_or(&0) as f64 + 0.5))
+                                ((n_rules + 1.0) / (*df_full.get(t).unwrap_or(&0) as f64 + 0.5))
                                     .ln()
                             })
                             .sum()
@@ -2168,9 +2263,7 @@ impl AgentR {
                 should_block = true;
                 let w = format!(
                     "BLOCKED: recurring critical rule [{}] {}: {}",
-                    e.id,
-                    op_str,
-                    e.what
+                    e.id, op_str, e.what
                 );
                 if !warnings.contains(&w) {
                     warnings.push(w);
@@ -2186,9 +2279,7 @@ impl AgentR {
             } else if e.severity == ErrorSeverity::Critical {
                 let w = format!(
                     "WARNING: past critical rule [{}] {}: {}",
-                    e.id,
-                    op_str,
-                    e.what
+                    e.id, op_str, e.what
                 );
                 if !warnings.contains(&w) {
                     warnings.push(w);
@@ -2249,7 +2340,11 @@ impl AgentR {
                 score: self.preflight_v2_score(e, op_id, &tag_ids, now),
             })
             .collect();
-        all.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        all.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         all
     }
 
@@ -2269,17 +2364,23 @@ impl AgentR {
                 should_block = true;
                 warnings.push(format!(
                     "BLOCKED: Recurring critical error in '{}': {}",
-                    self.resolve(error.operation), error.what
+                    self.resolve(error.operation),
+                    error.what
                 ));
             } else if error.severity == ErrorSeverity::Critical {
                 warnings.push(format!(
                     "WARNING: Past critical error in '{}': {}",
-                    self.resolve(error.operation), error.what
+                    self.resolve(error.operation),
+                    error.what
                 ));
             }
 
             if !error.prevention.is_empty() {
-                precautions.push(format!("[{}] {}", self.resolve(error.operation), error.prevention));
+                precautions.push(format!(
+                    "[{}] {}",
+                    self.resolve(error.operation),
+                    error.prevention
+                ));
             }
         }
 
@@ -2313,7 +2414,11 @@ impl AgentR {
         let mut issues = Vec::new();
 
         // Detect circular reasoning — same state hash seen before
-        let repetitions = self.reasoning_chain.iter().filter(|&&h| h == state_hash).count();
+        let repetitions = self
+            .reasoning_chain
+            .iter()
+            .filter(|&&h| h == state_hash)
+            .count();
         if repetitions >= REPETITION_THRESHOLD {
             issues.push(ReasoningIssue {
                 issue_type: ErrorCategory::CircularReasoning,
@@ -2436,7 +2541,8 @@ impl AgentR {
                 .collect();
             let last_op = self.reasoning_labels[n - 1].as_str();
             let overlap = prev_ops.iter().filter(|&&op| op == last_op).count();
-            if overlap == 0 && !last_op.starts_with("validate") && !last_op.starts_with("finalize") {
+            if overlap == 0 && !last_op.starts_with("validate") && !last_op.starts_with("finalize")
+            {
                 // Sudden shift isn't always bad (validation at end is normal)
                 // Only flag if the previous ops were all the same
                 let first_prev = prev_ops[0];
@@ -2460,8 +2566,7 @@ impl AgentR {
 
         let max_confidence = issues.iter().map(|i| i.confidence).fold(0.0_f64, f64::max);
         let confidence = 1.0 - max_confidence;
-        let valid = issues.is_empty()
-            || issues.iter().all(|i| i.confidence < 0.75);
+        let valid = issues.is_empty() || issues.iter().all(|i| i.confidence < 0.75);
 
         if !valid {
             self.stats.validations_failed += 1;
@@ -2501,10 +2606,16 @@ impl AgentR {
         // Check 2: Numeric anomalies (NaN, Inf)
         checks_run += 1;
         let json_str = output.to_string();
-        if json_str.contains("NaN") || json_str.contains("Infinity") || json_str.contains("-Infinity") {
+        if json_str.contains("NaN")
+            || json_str.contains("Infinity")
+            || json_str.contains("-Infinity")
+        {
             issues.push(ReasoningIssue {
                 issue_type: ErrorCategory::Fabrication,
-                description: format!("Operation '{}' produced non-finite numeric values", operation),
+                description: format!(
+                    "Operation '{}' produced non-finite numeric values",
+                    operation
+                ),
                 position: 0,
                 confidence: 0.95,
             });
@@ -2520,7 +2631,8 @@ impl AgentR {
                         issue_type: ErrorCategory::Fabrication,
                         description: format!(
                             "Operation '{}' produced {} identical results — likely fabricated",
-                            operation, arr.len()
+                            operation,
+                            arr.len()
                         ),
                         position: 0,
                         confidence: 0.80,
@@ -2546,7 +2658,8 @@ impl AgentR {
                     issue_type: ErrorCategory::RecurringPattern,
                     description: format!(
                         "Past critical error in '{}': {} — verify output is correct",
-                        self.resolve(error.operation), error.what
+                        self.resolve(error.operation),
+                        error.what
                     ),
                     position: 0,
                     confidence: 0.70,
@@ -2556,8 +2669,7 @@ impl AgentR {
 
         let max_confidence = issues.iter().map(|i| i.confidence).fold(0.0_f64, f64::max);
         let confidence = 1.0 - max_confidence;
-        let valid = issues.is_empty()
-            || issues.iter().all(|i| i.confidence < 0.75);
+        let valid = issues.is_empty() || issues.iter().all(|i| i.confidence < 0.75);
 
         if !valid {
             self.stats.validations_failed += 1;
@@ -2707,12 +2819,32 @@ impl AgentR {
             // disparaba (3/3 ok). Señal conservadora: issue N0 con confianza
             // media — degrada el pass a pass_unverified pero NO lo hace Fail.
             let text = output.to_string().to_lowercase();
-            let afirma_chequeo = ["verificar", "chequeo", "chequear", "health check", "status check", "verificación de status"]
-                .iter().any(|k| text.contains(k));
+            let afirma_chequeo = [
+                "verificar",
+                "chequeo",
+                "chequear",
+                "health check",
+                "status check",
+                "verificación de status",
+            ]
+            .iter()
+            .any(|k| text.contains(k));
             // NOTA (hueco M3): '-w %{http_code}' SOLO imprime el código — no
             // es mecanismo de verificación (el probe M3 lo demostró: pasa 3/3
             // sin señal). Mecanismo = algo que ACTÚA sobre el resultado.
-            let tiene_mecanismo = ["ok_codes", "expect", "--fail", "&&", "on_failure", "verify:", "on_error", "timeout", "--max-time"].iter().any(|k| text.contains(k));
+            let tiene_mecanismo = [
+                "ok_codes",
+                "expect",
+                "--fail",
+                "&&",
+                "on_failure",
+                "verify:",
+                "on_error",
+                "timeout",
+                "--max-time",
+            ]
+            .iter()
+            .any(|k| text.contains(k));
             if afirma_chequeo && !tiene_mecanismo {
                 issues.push(ReasoningIssue {
                     issue_type: ErrorCategory::OutputDrift,
@@ -2805,7 +2937,9 @@ impl AgentR {
                 details.push("N2: exit 0 with non-empty stderr and no diff".into());
                 break 'n2 LevelVerdict::Fail;
             }
-            details.push(format!("N2: exit_code {exit} consistent (stderr/diff coherent)"));
+            details.push(format!(
+                "N2: exit_code {exit} consistent (stderr/diff coherent)"
+            ));
             LevelVerdict::Pass
         };
 
@@ -2822,7 +2956,10 @@ impl AgentR {
                 checks_run += 1;
                 match store.n3_check(evidence.expect("evidence checked")) {
                     crate::receipts::N3Verdict::Pass => {
-                        details.push(format!("N3: receipt {} verificado (HMAC OK)", rid.as_str().unwrap_or("?")));
+                        details.push(format!(
+                            "N3: receipt {} verificado (HMAC OK)",
+                            rid.as_str().unwrap_or("?")
+                        ));
                         LevelVerdict::Pass
                     }
                     other => {
@@ -2870,9 +3007,7 @@ impl AgentR {
             ("unverifiable".to_string(), 0.3)
         };
         let suggestion = if any_fail {
-            let first_fail = [n0, n1, n2]
-                .iter()
-                .position(|l| *l == LevelVerdict::Fail);
+            let first_fail = [n0, n1, n2].iter().position(|l| *l == LevelVerdict::Fail);
             Some(match first_fail {
                 Some(0) => format!(
                     "N0 failed for '{}': check the output shape (null/uniform array) before trusting it",
@@ -2951,7 +3086,9 @@ impl AgentR {
         }
         let mut sorted: Vec<_> = counts.into_iter().collect();
         sorted.sort_by(|a, b| b.1.cmp(&a.1));
-        sorted.into_iter().take(limit)
+        sorted
+            .into_iter()
+            .take(limit)
             .map(|(id, n)| (self.resolve(id), n))
             .collect()
     }
@@ -2966,7 +3103,9 @@ impl AgentR {
     /// (los consumidores ven operation/context_tags como strings, no ids).
     /// Incluye los campos de dedup/deprecación de OPT-O4.
     pub fn serialize_errors(&self) -> Result<String, serde_json::Error> {
-        let resolved: Vec<PlainRecord> = self.errors.iter()
+        let resolved: Vec<PlainRecord> = self
+            .errors
+            .iter()
             .map(|e| PlainRecord {
                 id: e.id,
                 timestamp: e.timestamp,
@@ -2975,7 +3114,9 @@ impl AgentR {
                 operation: self.resolve(e.operation).to_string(),
                 what: e.what.to_string(),
                 why: e.why.to_string(),
-                context_tags: e.context_tags.iter()
+                context_tags: e
+                    .context_tags
+                    .iter()
                     .map(|t| self.resolve(*t).to_string())
                     .collect(),
                 prevention: e.prevention.to_string(),
@@ -2996,7 +3137,8 @@ impl AgentR {
     /// índices de recurrencia (OPT-O1) y dedup (OPT-O4).
     pub fn load_errors(&mut self, json: &str) -> Result<(), serde_json::Error> {
         let loaded: Vec<PlainRecord> = serde_json::from_str(json)?;
-        self.errors = loaded.into_iter()
+        self.errors = loaded
+            .into_iter()
             .map(|r| self.rebuild_plain_record(r))
             .collect();
         if let Some(max_id) = self.errors.iter().map(|e| e.id).max() {
@@ -3026,9 +3168,16 @@ mod tests {
     #[test]
     fn test_recall_top20_paridad_con_sort() {
         let mut agent = AgentR::new_ephemeral();
-        let ops = ["reindex_collection", "store_memory", "search_similar",
-                   "rebuild_hnsw_index", "merge_splats", "distill_lessons",
-                   "route_query", "gc_expired_splats"];
+        let ops = [
+            "reindex_collection",
+            "store_memory",
+            "search_similar",
+            "rebuild_hnsw_index",
+            "merge_splats",
+            "distill_lessons",
+            "route_query",
+            "gc_expired_splats",
+        ];
         let tags_pool = ["gpu", "cpu", "ci", "prod", "index", "retry", "hnsw"];
         for i in 0..500 {
             let op = ops[i % ops.len()];
@@ -3048,36 +3197,80 @@ mod tests {
                     1 => ErrorSeverity::Error,
                     _ => ErrorSeverity::Warning,
                 },
-                op, &format!("what {i}"), &format!("why {i}"),
-                &[t1, t2], &format!("prev {i}"),
+                op,
+                &format!("what {i}"),
+                &format!("why {i}"),
+                &[t1, t2],
+                &format!("prev {i}"),
             );
         }
 
         // Referencia: replicar el código original (Vec + sort estable + take 20).
         // (scorer adaptado al layout internado: compara strings via resolve)
         let ref_top: Vec<(f64, u64)> = {
-            let last_ts = agent.errors.iter().next_back().map(|e| e.timestamp).unwrap_or(0.0);
-            let mut scored: Vec<(f64, usize)> = agent.errors.iter().enumerate()
+            let last_ts = agent
+                .errors
+                .iter()
+                .next_back()
+                .map(|e| e.timestamp)
+                .unwrap_or(0.0);
+            let mut scored: Vec<(f64, usize)> = agent
+                .errors
+                .iter()
+                .enumerate()
                 .map(|(idx, e)| {
                     let mut s = 0.0;
                     let e_op = agent.resolve(e.operation);
-                    if e_op == "distill_lessons" { s += 10.0; }
-                    else if e_op.contains("distill_lessons") || "distill_lessons".contains(e_op) { s += 5.0; }
-                    for t in ["gpu", "ci"] { if e.context_tags.iter().any(|x| agent.resolve(*x) == t) { s += 3.0; } }
+                    if e_op == "distill_lessons" {
+                        s += 10.0;
+                    } else if e_op.contains("distill_lessons") || "distill_lessons".contains(e_op) {
+                        s += 5.0;
+                    }
+                    for t in ["gpu", "ci"] {
+                        if e.context_tags.iter().any(|x| agent.resolve(*x) == t) {
+                            s += 3.0;
+                        }
+                    }
                     let age_h = (last_ts - e.timestamp) / 3600.0;
                     s += (24.0 - age_h.min(24.0)) * 0.5;
                     s += e.recurrence as f64 * 2.0;
-                    s += match e.severity { ErrorSeverity::Critical => 5.0, ErrorSeverity::Error => 3.0, ErrorSeverity::Warning => 1.0 };
+                    s += match e.severity {
+                        ErrorSeverity::Critical => 5.0,
+                        ErrorSeverity::Error => 3.0,
+                        ErrorSeverity::Warning => 1.0,
+                    };
                     (s, idx)
                 })
                 .filter(|(s, _)| *s > 0.0)
                 .collect();
             scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-            scored.into_iter().take(20).map(|(s, idx)| (s, agent.errors[idx].id)).collect()
+            scored
+                .into_iter()
+                .take(20)
+                .map(|(s, idx)| (s, agent.errors[idx].id))
+                .collect()
         };
 
-        let got: Vec<(f64, u64)> = agent.recall_errors("distill_lessons", &["gpu", "ci"])
-            .into_iter().map(|e| (recurrence_only_score(&agent, e, "distill_lessons", &["gpu", "ci"], agent.errors.iter().next_back().map(|x| x.timestamp).unwrap_or(0.0)), e.id))
+        let got: Vec<(f64, u64)> = agent
+            .recall_errors("distill_lessons", &["gpu", "ci"])
+            .into_iter()
+            .map(|e| {
+                (
+                    recurrence_only_score(
+                        &agent,
+                        e,
+                        "distill_lessons",
+                        &["gpu", "ci"],
+                        agent
+                            .errors
+                            .iter()
+                            .next_back()
+                            .map(|x| x.timestamp)
+                            .unwrap_or(0.0),
+                    ),
+                    e.id,
+                )
+            })
             .collect();
         let got_ids: Vec<u64> = got.iter().map(|(_, id)| *id).collect();
         let ref_ids: Vec<u64> = ref_top.iter().map(|(_, id)| *id).collect();
@@ -3086,16 +3279,33 @@ mod tests {
 
     /// Recalcula el score de un registro para verificar paridad de scores
     /// (helper del test de paridad). Layout internado: resuelve ids via pool.
-    fn recurrence_only_score(agent: &AgentR, e: &ErrorRecord, operation: &str, tags: &[&str], last_ts: f64) -> f64 {
+    fn recurrence_only_score(
+        agent: &AgentR,
+        e: &ErrorRecord,
+        operation: &str,
+        tags: &[&str],
+        last_ts: f64,
+    ) -> f64 {
         let mut s = 0.0;
         let e_op = agent.resolve(e.operation);
-        if e_op == operation { s += 10.0; }
-        else if e_op.contains(operation) || operation.contains(e_op) { s += 5.0; }
-        for t in tags { if e.context_tags.iter().any(|x| agent.resolve(*x) == *t) { s += 3.0; } }
+        if e_op == operation {
+            s += 10.0;
+        } else if e_op.contains(operation) || operation.contains(e_op) {
+            s += 5.0;
+        }
+        for t in tags {
+            if e.context_tags.iter().any(|x| agent.resolve(*x) == *t) {
+                s += 3.0;
+            }
+        }
         let age_h = (last_ts - e.timestamp) / 3600.0;
         s += (24.0 - age_h.min(24.0)) * 0.5;
         s += e.recurrence as f64 * 2.0;
-        s += match e.severity { ErrorSeverity::Critical => 5.0, ErrorSeverity::Error => 3.0, ErrorSeverity::Warning => 1.0 };
+        s += match e.severity {
+            ErrorSeverity::Critical => 5.0,
+            ErrorSeverity::Error => 3.0,
+            ErrorSeverity::Warning => 1.0,
+        };
         s
     }
 
@@ -3103,9 +3313,13 @@ mod tests {
     fn test_record_and_recall() {
         let mut agent = AgentR::new_ephemeral();
         agent.record_error(
-            ErrorCategory::Fabrication, ErrorSeverity::Critical,
-            "generate_benchmarks", "Invented benchmark data", "Skipped actual testing",
-            &["benchmarks", "GPU"], "Only use validated data from real tests",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Critical,
+            "generate_benchmarks",
+            "Invented benchmark data",
+            "Skipped actual testing",
+            &["benchmarks", "GPU"],
+            "Only use validated data from real tests",
         );
 
         let found = agent.recall_errors("generate_benchmarks", &["benchmarks"]);
@@ -3119,9 +3333,13 @@ mod tests {
         // Record 3 identical critical errors
         for _ in 0..3 {
             agent.record_error(
-                ErrorCategory::Fabrication, ErrorSeverity::Critical,
-                "generate_data", "Made up numbers", "No testing",
-                &["data"], "Test first",
+                ErrorCategory::Fabrication,
+                ErrorSeverity::Critical,
+                "generate_data",
+                "Made up numbers",
+                "No testing",
+                &["data"],
+                "Test first",
             );
         }
 
@@ -3149,21 +3367,20 @@ mod tests {
     #[test]
     fn test_validate_output_nan() {
         let mut agent = AgentR::new_ephemeral();
-        let result = agent.validate_output(
-            "compute_distance",
-            &serde_json::json!({"score": "NaN"}),
-        );
+        let result =
+            agent.validate_output("compute_distance", &serde_json::json!({"score": "NaN"}));
         assert!(!result.valid);
-        assert!(result.issues.iter().any(|i| i.issue_type == ErrorCategory::Fabrication));
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.issue_type == ErrorCategory::Fabrication));
     }
 
     #[test]
     fn test_validate_uniform_results() {
         let mut agent = AgentR::new_ephemeral();
-        let result = agent.validate_output(
-            "search",
-            &serde_json::json!([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
-        );
+        let result =
+            agent.validate_output("search", &serde_json::json!([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]));
         assert!(!result.valid);
     }
 
@@ -3187,16 +3404,23 @@ mod tests {
             agent.reasoning_step("optimize", 1);
         }
         let result = agent.validate_chain();
-        assert!(result.issues.iter().any(|i| i.description.contains("Stagnation")));
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.description.contains("Stagnation")));
     }
 
     #[test]
     fn test_serialize_load_roundtrip() {
         let mut agent = AgentR::new_ephemeral();
         agent.record_error(
-            ErrorCategory::BadAssumption, ErrorSeverity::Warning,
-            "search", "Wrong backend", "Assumed CUDA available",
-            &["gpu"], "Check backend availability first",
+            ErrorCategory::BadAssumption,
+            ErrorSeverity::Warning,
+            "search",
+            "Wrong backend",
+            "Assumed CUDA available",
+            &["gpu"],
+            "Check backend availability first",
         );
         let json = agent.serialize_errors().unwrap();
         let mut agent2 = AgentR::new_ephemeral();
@@ -3223,8 +3447,24 @@ mod tests {
     #[test]
     fn test_stats() {
         let mut agent = AgentR::new_ephemeral();
-        agent.record_error(ErrorCategory::Fabrication, ErrorSeverity::Critical, "op1", "w", "y", &[], "p");
-        agent.record_error(ErrorCategory::Fabrication, ErrorSeverity::Error, "op2", "w", "y", &[], "p");
+        agent.record_error(
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Critical,
+            "op1",
+            "w",
+            "y",
+            &[],
+            "p",
+        );
+        agent.record_error(
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Error,
+            "op2",
+            "w",
+            "y",
+            &[],
+            "p",
+        );
         agent.preflight("op1", &[]);
         agent.validate_output("op1", &serde_json::json!(null));
 
@@ -3266,11 +3506,8 @@ mod tests {
 
     /// Unique temp dir per test (parallel-safe).
     fn tmp_state_path(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "agent_r_test_{}_{}",
-            name,
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("agent_r_test_{}_{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir.join("state.json")
@@ -3301,12 +3538,22 @@ mod tests {
         write_empty_state(&path);
         let mut agent = AgentR::with_state_path(path.clone());
         agent.record_error(
-            ErrorCategory::Fabrication, ErrorSeverity::Critical,
-            "op_a", "what a", "why a", &["t1"], "prev a",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Critical,
+            "op_a",
+            "what a",
+            "why a",
+            &["t1"],
+            "prev a",
         );
         agent.record_error(
-            ErrorCategory::Timeout, ErrorSeverity::Error,
-            "op_b", "what b", "why b", &["t2"], "prev b",
+            ErrorCategory::Timeout,
+            ErrorSeverity::Error,
+            "op_b",
+            "what b",
+            "why b",
+            &["t2"],
+            "prev b",
         );
         assert!(path.is_file(), "write-through must create the snapshot");
         // Debounce (pendiente 2a): el snapshot en disco puede laguar hasta
@@ -3329,8 +3576,13 @@ mod tests {
         // next_id keeps growing across restarts (no id reuse)
         let mut agent3 = AgentR::with_state_path(path);
         let (id, outcome, _) = agent3.record_error_dedup(
-            ErrorCategory::Timeout, ErrorSeverity::Error,
-            "op_c", "what c", "why c", &[], "prev c",
+            ErrorCategory::Timeout,
+            ErrorSeverity::Error,
+            "op_c",
+            "what c",
+            "why c",
+            &[],
+            "prev c",
         );
         assert_eq!(id, 3);
         assert_eq!(outcome, WriteOutcome::Add);
@@ -3344,8 +3596,13 @@ mod tests {
 
         // ADD: unknown fingerprint
         let (id1, o1, r1) = agent.record_error_dedup(
-            ErrorCategory::Fabrication, ErrorSeverity::Error,
-            "Generate_Benchmarks ", "  Invented benchmark DATA ", "why", &["gpu"], "p",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Error,
+            "Generate_Benchmarks ",
+            "  Invented benchmark DATA ",
+            "why",
+            &["gpu"],
+            "p",
         );
         assert_eq!(o1, WriteOutcome::Add);
         assert_eq!(r1, 0);
@@ -3353,8 +3610,13 @@ mod tests {
 
         // NOOP: same fingerprint (case/whitespace-insensitive), nothing new
         let (id2, o2, r2) = agent.record_error_dedup(
-            ErrorCategory::Fabrication, ErrorSeverity::Error,
-            "generate_benchmarks", "invented benchmark data", "why", &["gpu"], "p",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Error,
+            "generate_benchmarks",
+            "invented benchmark data",
+            "why",
+            &["gpu"],
+            "p",
         );
         assert_eq!(id2, id1, "duplicate maps to the existing incident id");
         assert_eq!(o2, WriteOutcome::Noop);
@@ -3363,16 +3625,27 @@ mod tests {
 
         // UPDATE: new context tag + severity escalation
         let (_, o3, r3) = agent.record_error_dedup(
-            ErrorCategory::Fabrication, ErrorSeverity::Critical,
-            "generate_benchmarks", "invented benchmark data", "why", &["cuda"], "p",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Critical,
+            "generate_benchmarks",
+            "invented benchmark data",
+            "why",
+            &["cuda"],
+            "p",
         );
         assert_eq!(o3, WriteOutcome::Update);
         assert_eq!(r3, 2);
         assert_eq!(agent.errors().len(), 1);
         let rec = &agent.errors()[0];
         assert_eq!(rec.severity, ErrorSeverity::Critical, "severity escalated");
-        assert!(rec.context_tags.iter().any(|t| agent.resolve(*t) == "cuda"), "tags merged (union)");
-        assert!(rec.context_tags.iter().any(|t| agent.resolve(*t) == "gpu"), "original tags kept");
+        assert!(
+            rec.context_tags.iter().any(|t| agent.resolve(*t) == "cuda"),
+            "tags merged (union)"
+        );
+        assert!(
+            rec.context_tags.iter().any(|t| agent.resolve(*t) == "gpu"),
+            "original tags kept"
+        );
 
         // Stats: 3 write events, 1 unique incident
         assert_eq!(agent.stats().total_errors_recorded, 3);
@@ -3380,8 +3653,13 @@ mod tests {
 
         // Distinct what => distinct fingerprint => new row
         let (id4, o4, _) = agent.record_error_dedup(
-            ErrorCategory::Fabrication, ErrorSeverity::Error,
-            "generate_benchmarks", "different failure", "why", &[], "p",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Error,
+            "generate_benchmarks",
+            "different failure",
+            "why",
+            &[],
+            "p",
         );
         assert_eq!(o4, WriteOutcome::Add);
         assert!(id4 > id1, "next_id keeps growing, no reuse");
@@ -3394,7 +3672,11 @@ mod tests {
         // First boot: no state file => seeds load and persist
         let mut agent = AgentR::with_state_path(path.clone());
         assert_eq!(agent.errors().len(), 3, "3 historical seed incidents");
-        let ops: Vec<&str> = agent.errors().iter().map(|e| agent.resolve(e.operation)).collect();
+        let ops: Vec<&str> = agent
+            .errors()
+            .iter()
+            .map(|e| agent.resolve(e.operation))
+            .collect();
         assert!(ops.contains(&"generate_benchmarks"));
         assert!(ops.contains(&"image2svg_pipeline"));
         assert!(ops.contains(&"promise_long_task"));
@@ -3405,8 +3687,13 @@ mod tests {
         assert_eq!(agent2.errors().len(), 3, "no double-seeding");
         // A new error lands on top of the seeds without evicting them
         agent2.record_error(
-            ErrorCategory::Timeout, ErrorSeverity::Warning,
-            "fresh_op", "w", "y", &[], "p",
+            ErrorCategory::Timeout,
+            ErrorSeverity::Warning,
+            "fresh_op",
+            "w",
+            "y",
+            &[],
+            "p",
         );
         assert_eq!(agent2.errors().len(), 4);
         agent2.flush().unwrap(); // debounce
@@ -3426,7 +3713,13 @@ mod tests {
         let mut agent = AgentR::with_state_path(path);
         assert_eq!(agent.errors().len(), 0, "valid empty state stays empty");
         agent.record_error(
-            ErrorCategory::Other, ErrorSeverity::Warning, "op", "w", "y", &[], "p",
+            ErrorCategory::Other,
+            ErrorSeverity::Warning,
+            "op",
+            "w",
+            "y",
+            &[],
+            "p",
         );
         assert_eq!(agent.errors().len(), 1);
     }
@@ -3437,19 +3730,31 @@ mod tests {
         write_empty_state(&path);
         let mut agent = AgentR::with_state_path(path.clone());
         let (id, _, _) = agent.record_error_dedup(
-            ErrorCategory::BadAssumption, ErrorSeverity::Critical,
-            "noisy_op", "false positive trigger", "why", &[], "p",
+            ErrorCategory::BadAssumption,
+            ErrorSeverity::Critical,
+            "noisy_op",
+            "false positive trigger",
+            "why",
+            &[],
+            "p",
         );
         assert_eq!(agent.recall_errors("noisy_op", &[]).len(), 1);
 
         assert!(agent.deprecate_error(id, "FP loop: 3 false blocks measured"));
-        assert_eq!(agent.recall_errors("noisy_op", &[]).len(), 0, "deprecated excluded");
+        assert_eq!(
+            agent.recall_errors("noisy_op", &[]).len(),
+            0,
+            "deprecated excluded"
+        );
         agent.flush().unwrap(); // debounce: comprometer antes de releer
 
         // Deprecated state survives restart
         let agent2 = AgentR::with_state_path(path);
         assert_eq!(agent2.recall_errors("noisy_op", &[]).len(), 0);
-        assert!(agent2.errors().iter().any(|e| e.deprecated), "kept for audit");
+        assert!(
+            agent2.errors().iter().any(|e| e.deprecated),
+            "kept for audit"
+        );
     }
 
     #[test]
@@ -3472,10 +3777,19 @@ mod tests {
         assert_eq!(agent.errors().len(), 1);
         // Duplicate of the legacy record must dedup (fingerprint was rebuilt)
         let (_, outcome, _) = agent.record_error_dedup(
-            ErrorCategory::Timeout, ErrorSeverity::Warning,
-            "legacy_op", "legacy what", "y", &["x"], "p",
+            ErrorCategory::Timeout,
+            ErrorSeverity::Warning,
+            "legacy_op",
+            "legacy what",
+            "y",
+            &["x"],
+            "p",
         );
-        assert_eq!(outcome, WriteOutcome::Noop, "legacy record dedups after repair");
+        assert_eq!(
+            outcome,
+            WriteOutcome::Noop,
+            "legacy record dedups after repair"
+        );
         assert_eq!(agent.errors().len(), 1);
     }
 
@@ -3485,12 +3799,20 @@ mod tests {
         write_empty_state(&path);
         let mut agent = AgentR::with_state_path(path.clone());
         agent.record_error(
-            ErrorCategory::Other, ErrorSeverity::Warning,
-            "op", "w", "y", &[], "p",
+            ErrorCategory::Other,
+            ErrorSeverity::Warning,
+            "op",
+            "w",
+            "y",
+            &[],
+            "p",
         );
         agent.flush().unwrap(); // debounce: escritura atómica comprometida
         assert!(path.is_file());
-        assert!(!path.with_extension("json.tmp").exists(), "tmp file renamed away");
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "tmp file renamed away"
+        );
         // Snapshot on disk parses as the StateSnapshot shape
         let raw = fs::read_to_string(&path).unwrap();
         let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
@@ -3517,24 +3839,38 @@ mod tests {
             for cat in cats {
                 for op in ops {
                     k += 1;
-                    let id = agent.record_error(cat, ErrorSeverity::Error, op,
-                        &format!("what #{k}"), "y", &[], "p");
+                    let id = agent.record_error(
+                        cat,
+                        ErrorSeverity::Error,
+                        op,
+                        &format!("what #{k}"),
+                        "y",
+                        &[],
+                        "p",
+                    );
                     ids.push((id, cat, op));
                 }
             }
             // ruido con clave única para forzar buckets distintos
             agent.record_error(
-                ErrorCategory::Other, ErrorSeverity::Warning,
-                &format!("noise_{round}"), &format!("w #{round}"), "y", &[], "p",
+                ErrorCategory::Other,
+                ErrorSeverity::Warning,
+                &format!("noise_{round}"),
+                &format!("w #{round}"),
+                "y",
+                &[],
+                "p",
             );
         }
         for (id, cat, op) in &ids {
             let rec = agent.errors().iter().find(|e| e.id == *id).unwrap();
             // naive: contar previos con misma clave (solo ids < id)
-            let naive_count = ids.iter()
+            let naive_count = ids
+                .iter()
                 .filter(|(pid, pc, po)| pid < id && pc == cat && po == op)
                 .count() as u32;
-            let naive_pattern = ids.iter()
+            let naive_pattern = ids
+                .iter()
                 .filter(|(pid, pc, po)| pid < id && pc == cat && po == op)
                 .map(|(pid, _, _)| *pid)
                 .max();
@@ -3549,15 +3885,29 @@ mod tests {
         let mut agent = AgentR::new_ephemeral();
         // 3 incidentes distintos de la misma clave (what distinto: dedup no fusiona)
         for k in 1..=3 {
-            agent.record_error(ErrorCategory::Fabrication, ErrorSeverity::Critical, "op_x",
-                &format!("variante #{k}"), "y", &[], "p");
+            agent.record_error(
+                ErrorCategory::Fabrication,
+                ErrorSeverity::Critical,
+                "op_x",
+                &format!("variante #{k}"),
+                "y",
+                &[],
+                "p",
+            );
         }
         let json = agent.serialize_errors().unwrap();
         let mut agent2 = AgentR::new_ephemeral();
         agent2.load_errors(&json).unwrap();
         // 4º incidente: recurrence=3 (incidentes previos de la clave), pattern_id=max previo=3
-        let id = agent2.record_error(ErrorCategory::Fabrication, ErrorSeverity::Critical, "op_x",
-            "variante #4", "y", &[], "p");
+        let id = agent2.record_error(
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Critical,
+            "op_x",
+            "variante #4",
+            "y",
+            &[],
+            "p",
+        );
         let rec = agent2.errors().iter().find(|e| e.id == id).unwrap();
         assert_eq!(rec.recurrence, 3);
         assert_eq!(rec.pattern_id, Some(3));
@@ -3572,11 +3922,21 @@ mod tests {
         // manual porque MAX_ERRORS es una const global (2M en este branch).
         let mut agent = AgentR::new_ephemeral();
         for i in 0..5 {
-            agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "cap_op",
-                &format!("w #{i}"), "y", &[], &format!("p{i}"));
+            agent.record_error(
+                ErrorCategory::Other,
+                ErrorSeverity::Warning,
+                "cap_op",
+                &format!("w #{i}"),
+                "y",
+                &[],
+                &format!("p{i}"),
+            );
         }
         let op_id = agent.string_pool_index.get("cap_op").copied().unwrap();
-        let bucket = agent.recurrence_index.get(&(ErrorCategory::Other, op_id)).unwrap();
+        let bucket = agent
+            .recurrence_index
+            .get(&(ErrorCategory::Other, op_id))
+            .unwrap();
         assert_eq!(bucket.len(), 5);
         assert_eq!(*bucket.back().unwrap(), 5);
     }
@@ -3587,8 +3947,24 @@ mod tests {
     fn test_intern_dedup_same_operation() {
         // Dos registros con la misma operación comparten id (dedup del pool).
         let mut agent = AgentR::new_ephemeral();
-        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "op_x", "w", "y", &["t"], "p");
-        agent.record_error(ErrorCategory::Other, ErrorSeverity::Error, "op_x", "w2", "y2", &["t"], "p2");
+        agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Warning,
+            "op_x",
+            "w",
+            "y",
+            &["t"],
+            "p",
+        );
+        agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Error,
+            "op_x",
+            "w2",
+            "y2",
+            &["t"],
+            "p2",
+        );
         let ids: Vec<_> = agent.errors().iter().map(|e| e.operation).collect();
         assert_eq!(ids.len(), 2);
         assert_eq!(ids[0], ids[1], "misma operación => mismo id internado");
@@ -3599,8 +3975,24 @@ mod tests {
     fn test_recall_exact_and_partial_match_interned() {
         // Exact match (+10) y partial contains (+5) siguen funcionando con ids.
         let mut agent = AgentR::new_ephemeral();
-        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "rebuild_hnsw_index", "w", "y", &[], "p");
-        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "hnsw", "w", "y", &[], "p");
+        agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Warning,
+            "rebuild_hnsw_index",
+            "w",
+            "y",
+            &[],
+            "p",
+        );
+        agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Warning,
+            "hnsw",
+            "w",
+            "y",
+            &[],
+            "p",
+        );
         // exact: score 10+recency+severity; partial: 5+... => ambos > 0
         let found = agent.recall_errors("rebuild_hnsw_index", &[]);
         assert_eq!(found.len(), 2, "exact + contains deben ambos puntuar");
@@ -3616,29 +4008,70 @@ mod tests {
         // TODOS los registros recientes => el assertion correcto es que ningún
         // resultado matchee exactamente la op desconocida.
         let mut agent = AgentR::new_ephemeral();
-        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "zzz_totally_unrelated", "w", "y", &[], "p");
+        agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Warning,
+            "zzz_totally_unrelated",
+            "w",
+            "y",
+            &[],
+            "p",
+        );
         let found = agent.recall_errors("qqq_never_seen", &[]);
-        assert!(found.iter().all(|e| agent.resolve(e.operation) != "qqq_never_seen"),
-            "op no internada jamás exact-matchea");
+        assert!(
+            found
+                .iter()
+                .all(|e| agent.resolve(e.operation) != "qqq_never_seen"),
+            "op no internada jamás exact-matchea"
+        );
     }
 
     #[test]
     fn test_tag_overlap_interned() {
         let mut agent = AgentR::new_ephemeral();
-        agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "op", "w", "y", &["gpu", "ci"], "p");
+        agent.record_error(
+            ErrorCategory::Other,
+            ErrorSeverity::Warning,
+            "op",
+            "w",
+            "y",
+            &["gpu", "ci"],
+            "p",
+        );
         let found = agent.recall_errors("different_op", &["gpu"]);
-        assert_eq!(found.len(), 1, "tag overlap debe puntuar aunque la op no coincida");
+        assert_eq!(
+            found.len(),
+            1,
+            "tag overlap debe puntuar aunque la op no coincida"
+        );
     }
 
     #[test]
     fn test_serialize_contract_strings_not_ids() {
         // Contrato JSON estable: operation/context_tags serializan como strings.
         let mut agent = AgentR::new_ephemeral();
-        agent.record_error(ErrorCategory::Fabrication, ErrorSeverity::Critical, "gen_bench", "w", "y", &["bench"], "p");
+        agent.record_error(
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Critical,
+            "gen_bench",
+            "w",
+            "y",
+            &["bench"],
+            "p",
+        );
         let json = agent.serialize_errors().unwrap();
-        assert!(json.contains("\"operation\":\"gen_bench\""), "operation debe ser string en JSON: {json}");
-        assert!(json.contains("\"context_tags\":[\"bench\"]"), "tags deben ser strings en JSON: {json}");
-        assert!(!json.contains("\"operation\":0"), "operation no debe serializar como id numérico");
+        assert!(
+            json.contains("\"operation\":\"gen_bench\""),
+            "operation debe ser string en JSON: {json}"
+        );
+        assert!(
+            json.contains("\"context_tags\":[\"bench\"]"),
+            "tags deben ser strings en JSON: {json}"
+        );
+        assert!(
+            !json.contains("\"operation\":0"),
+            "operation no debe serializar como id numérico"
+        );
 
         // Roundtrip preserva el comportamiento de recall.
         let mut agent2 = AgentR::new_ephemeral();
@@ -3650,10 +4083,28 @@ mod tests {
     #[test]
     fn test_top_patterns_interned() {
         let mut agent = AgentR::new_ephemeral();
-        for k in 0..3 { agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "op_a",
-            &format!("w #{k}"), "y", &[], "p"); }
-        for k in 0..1 { agent.record_error(ErrorCategory::Other, ErrorSeverity::Warning, "op_b",
-            &format!("w {k}"), "y", &[], "p"); }
+        for k in 0..3 {
+            agent.record_error(
+                ErrorCategory::Other,
+                ErrorSeverity::Warning,
+                "op_a",
+                &format!("w #{k}"),
+                "y",
+                &[],
+                "p",
+            );
+        }
+        for k in 0..1 {
+            agent.record_error(
+                ErrorCategory::Other,
+                ErrorSeverity::Warning,
+                "op_b",
+                &format!("w {k}"),
+                "y",
+                &[],
+                "p",
+            );
+        }
         let top = agent.top_patterns(2);
         assert_eq!(top[0], ("op_a", 3));
         assert_eq!(top[1], ("op_b", 1));
@@ -3667,13 +4118,19 @@ mod tests {
     fn test_n1_no_substring_false_positive() {
         let mut agent = AgentR::new_ephemeral();
         // v1 fallaba aquí: json_str.contains("NaN") era true por el STRING.
-        let r = agent.validate_output_v2("compute_distance", &serde_json::json!({
-            "score": "NaN",
-            "note": "value was Infinity last run",
-            "vals": [1.0, 2.5, -3.25],
-        }));
-        assert_eq!(r.verdicts.n1_numeric_consistency, LevelVerdict::Pass,
-            "strings con 'NaN'/'Infinity' NO son valores no-finitos");
+        let r = agent.validate_output_v2(
+            "compute_distance",
+            &serde_json::json!({
+                "score": "NaN",
+                "note": "value was Infinity last run",
+                "vals": [1.0, 2.5, -3.25],
+            }),
+        );
+        assert_eq!(
+            r.verdicts.n1_numeric_consistency,
+            LevelVerdict::Pass,
+            "strings con 'NaN'/'Infinity' NO son valores no-finitos"
+        );
         assert_ne!(r.overall, "fail");
         // R03 Capa 1: sin evidencia N2/N3 => pass_unverified => valid=false
         // (un pass de forma no autoriza promoción de reglas).
@@ -3690,14 +4147,20 @@ mod tests {
     fn test_n1_scan_uses_as_f64_not_substrings() {
         let mut agent = AgentR::new_ephemeral();
         // Número grande legítimo (finite): Pass.
-        let r = agent.validate_output_v2("op", &serde_json::json!({
-            "big": 1e308_f64,
-            "neg": -1e308_f64,
-        }));
+        let r = agent.validate_output_v2(
+            "op",
+            &serde_json::json!({
+                "big": 1e308_f64,
+                "neg": -1e308_f64,
+            }),
+        );
         assert_eq!(r.verdicts.n1_numeric_consistency, LevelVerdict::Pass);
         // La serialización de floats pequeños (exponente e-notation) tampoco
         // debe generar FPs por substring.
-        let r2 = agent.validate_output_v2("op", &serde_json::json!([1e-10, 2e-10, 3e-10, 4e-10, 5e-10, 6e-10]));
+        let r2 = agent.validate_output_v2(
+            "op",
+            &serde_json::json!([1e-10, 2e-10, 3e-10, 4e-10, 5e-10, 6e-10]),
+        );
         assert_eq!(r2.verdicts.n1_numeric_consistency, LevelVerdict::Pass);
     }
 
@@ -3712,7 +4175,8 @@ mod tests {
         assert_eq!(r.confidence, 0.0);
         assert!(r.suggestion.as_deref().unwrap_or("").contains("N0"));
 
-        let r2 = agent.validate_output_v2("search", &serde_json::json!([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]));
+        let r2 =
+            agent.validate_output_v2("search", &serde_json::json!([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]));
         assert_eq!(r2.verdicts.n0_form, LevelVerdict::Fail);
         assert_eq!(r2.overall, "fail");
     }
@@ -3728,8 +4192,10 @@ mod tests {
         let r = agent.validate_output_v2_evidence("op", &out, None);
         assert_eq!(r.verdicts.n2_caller_evidence, LevelVerdict::Unverifiable);
         // R03 Capa 1: N0/N1 pasan pero sin evidencia => pass_unverified.
-        assert_eq!(r.overall, "pass_unverified",
-            "N0/N1 sin evidencia NO es pass verificado");
+        assert_eq!(
+            r.overall, "pass_unverified",
+            "N0/N1 sin evidencia NO es pass verificado"
+        );
         // (con evidencia N2 consistente sí es pass verificado — caso siguiente)
 
         // Evidencia consistente: pass.
@@ -3747,7 +4213,8 @@ mod tests {
         assert!(r3.suggestion.as_deref().unwrap_or("").contains("N2"));
 
         // exit 0 + stderr no vacío sin diff que lo explique: contradictorio.
-        let ev_contra = serde_json::json!({"exit_code": 0, "stderr": "warning: stale handle", "diff": ""});
+        let ev_contra =
+            serde_json::json!({"exit_code": 0, "stderr": "warning: stale handle", "diff": ""});
         let r4 = agent.validate_output_v2_evidence("op", &out, Some(&ev_contra));
         assert_eq!(r4.verdicts.n2_caller_evidence, LevelVerdict::Fail);
     }
@@ -3801,9 +4268,20 @@ mod tests {
         let base = agent.preflight_v2("level-1", &["babyai"]);
         let hyb = agent.preflight_v2_hybrid("level-1", &["babyai"], situation);
         let is_b = |r: &ScoredRule| r.what.contains("red ball");
-        let b_before = base.top_rules.iter().position(is_b).expect("regla B en base");
-        let b_after = hyb.top_rules.iter().position(is_b).expect("regla B en híbrido");
-        assert!(b_after < b_before, "regla con overlap debe subir: before={b_before} after={b_after}");
+        let b_before = base
+            .top_rules
+            .iter()
+            .position(is_b)
+            .expect("regla B en base");
+        let b_after = hyb
+            .top_rules
+            .iter()
+            .position(is_b)
+            .expect("regla B en híbrido");
+        assert!(
+            b_after < b_before,
+            "regla con overlap debe subir: before={b_before} after={b_after}"
+        );
     }
 
     /// Híbrido: PRESENCIA, no frecuencia — repetir tokens de la regla en la
@@ -3888,9 +4366,13 @@ mod tests {
         // Incidente critical VISTO 3 veces (dedup: 1 regla, recurrence=2).
         for _ in 0..3 {
             agent.record_error(
-                ErrorCategory::Fabrication, ErrorSeverity::Critical,
-                "generate_data", "Made up numbers", "No testing",
-                &["data"], "Test first",
+                ErrorCategory::Fabrication,
+                ErrorSeverity::Critical,
+                "generate_data",
+                "Made up numbers",
+                "No testing",
+                &["data"],
+                "Test first",
             );
         }
         let r = agent.preflight_v2("generate_data", &["data"]);
@@ -3903,8 +4385,13 @@ mod tests {
         // Critical VISTO 1 vez (recurrence=0): WARNING, no veto.
         let mut agent2 = AgentR::new_ephemeral();
         agent2.record_error(
-            ErrorCategory::Fabrication, ErrorSeverity::Critical,
-            "one_shot", "w", "y", &[], "p",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Critical,
+            "one_shot",
+            "w",
+            "y",
+            &[],
+            "p",
         );
         let r2 = agent2.preflight_v2("one_shot", &[]);
         assert!(r2.proceed, "critical sin recurrencia => NO veto");
@@ -3914,8 +4401,13 @@ mod tests {
         let mut agent3 = AgentR::new_ephemeral();
         for _ in 0..5 {
             agent3.record_error(
-                ErrorCategory::BadAssumption, ErrorSeverity::Critical,
-                "noisy_op", "FP trigger", "y", &[], "p",
+                ErrorCategory::BadAssumption,
+                ErrorSeverity::Critical,
+                "noisy_op",
+                "FP trigger",
+                "y",
+                &[],
+                "p",
             );
         }
         let id = agent3.errors()[0].id;
@@ -3937,9 +4429,13 @@ mod tests {
         let mut agent = AgentR::new_ephemeral();
         for _ in 0..3 {
             agent.record_error(
-                ErrorCategory::Fabrication, ErrorSeverity::Critical,
-                "generate_benchmarks", "Invented benchmark data", "Skipped testing",
-                &["benchmarks", "GPU"], "Only use validated data",
+                ErrorCategory::Fabrication,
+                ErrorSeverity::Critical,
+                "generate_benchmarks",
+                "Invented benchmark data",
+                "Skipped testing",
+                &["benchmarks", "GPU"],
+                "Only use validated data",
             );
         }
 
@@ -3951,7 +4447,10 @@ mod tests {
         // en C1/C2 con 0 pérdidas). La regresión que este test congela: el bonus
         // de similitud para la op nunca vista es CERO en el score v2.
         let op_id = agent.string_pool_index.get("never_seen_op").copied();
-        assert!(op_id.is_none(), "op nunca internada no puede exact-matchear");
+        assert!(
+            op_id.is_none(),
+            "op nunca internada no puede exact-matchear"
+        );
         let score = agent.preflight_v2_score(
             agent.errors().iter().next().unwrap(),
             op_id,
@@ -3961,7 +4460,10 @@ mod tests {
         // Score = recencia + freq únicamente (sin sim: 10 exact / 5 substring /
         // 3·tags). Con 3 registros idénticos hace segundos: 6·1 + 2·ln(5) ≈ 9.2
         // < 10 (nunca parece exact-match de otra operación).
-        assert!(score < 10.0, "sin exact ni tags, score debe ser < 10 (got {score:.2})");
+        assert!(
+            score < 10.0,
+            "sin exact ni tags, score debe ser < 10 (got {score:.2})"
+        );
     }
 
     #[test]
@@ -3972,9 +4474,13 @@ mod tests {
         // completo, el viejo (48h > ventana 24h) suma 0.
         let mut agent = AgentR::new_ephemeral();
         let id_viejo = agent.record_error(
-            ErrorCategory::Fabrication, ErrorSeverity::Warning,
-            "old_op", "Old failure", "Ancient",
-            &[], "Nothing",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Warning,
+            "old_op",
+            "Old failure",
+            "Ancient",
+            &[],
+            "Nothing",
         );
         // Envejecer el registro a 48h atrás (test interno: acceso a errors).
         let idx = agent.errors.len() - 1;
@@ -3986,9 +4492,13 @@ mod tests {
         assert_eq!(found[0].id, id_viejo);
 
         let id_fresh = agent.record_error(
-            ErrorCategory::Fabrication, ErrorSeverity::Warning,
-            "old_op", "Fresh failure of same op", "Recent",
-            &[], "Nothing",
+            ErrorCategory::Fabrication,
+            ErrorSeverity::Warning,
+            "old_op",
+            "Fresh failure of same op",
+            "Recent",
+            &[],
+            "Nothing",
         );
         let found = agent.recall_errors("old_op", &[]);
         assert_eq!(found.len(), 2, "mismo op exact: ambos se recallan");
@@ -4004,16 +4514,25 @@ mod tests {
         let mut agent = AgentR::new_ephemeral();
         // Lección registrada SOLO para la op "hnsw".
         agent.record_error(
-            ErrorCategory::Other, ErrorSeverity::Critical,
-            "hnsw", "index corrupt", "y", &["index"], "rebuild from source",
+            ErrorCategory::Other,
+            ErrorSeverity::Critical,
+            "hnsw",
+            "index corrupt",
+            "y",
+            &["index"],
+            "rebuild from source",
         );
         // Query por "rebuild_hnsw_index": en v1 el contains cruzado sumaba
         // +5; en v2 NO debe considerarse match de operación. La lección puede
         // seguir apareciendo por el TAG "index" (filtro secundario legítimo),
         // pero el score NO debe incluir el bonus de exact-match (+10).
         let r = agent.preflight_v2("rebuild_hnsw_index", &[]);
-        assert!(r.top_rules.iter().all(|s| s.operation != "rebuild_hnsw_index"
-            || s.operation == "hnsw"), "ninguna regla de otra operación matchea por substring");
+        assert!(
+            r.top_rules
+                .iter()
+                .all(|s| s.operation != "rebuild_hnsw_index" || s.operation == "hnsw"),
+            "ninguna regla de otra operación matchea por substring"
+        );
         // Sin tags en común y sin exact: la lección "hnsw" recibe sólo
         // recencia+freq => score bajo pero > 0 (vista hace <24h). El punto
         // clave: NO hay bonus de similitud => no domina el top-3 como en v1.
@@ -4032,8 +4551,13 @@ mod tests {
         let mut agent = AgentR::new_ephemeral();
         for k in 0..6 {
             agent.record_error(
-                ErrorCategory::Other, ErrorSeverity::Error,
-                &format!("op_{k}"), &format!("w{k}"), "y", &["common"], "prev",
+                ErrorCategory::Other,
+                ErrorSeverity::Error,
+                &format!("op_{k}"),
+                &format!("w{k}"),
+                "y",
+                &["common"],
+                "prev",
             );
         }
         let r = agent.preflight_v2("op_2", &["common"]);
@@ -4056,12 +4580,20 @@ mod tests {
         let sw = AgentSwarm::new();
         let mut ar = AgentR::new_ephemeral();
         ar.record_error(
-            ErrorCategory::Timeout, ErrorSeverity::Error,
-            "distill_lessons", "OOM on merge", "y", &["gpu"], "chunk the merge",
+            ErrorCategory::Timeout,
+            ErrorSeverity::Error,
+            "distill_lessons",
+            "OOM on merge",
+            "y",
+            &["gpu"],
+            "chunk the merge",
         );
         let pf = sw.preflight_shared(&mut ar, "distill_lessons", &["gpu"]);
         assert!(pf["relevant_errors"].as_u64().unwrap_or(0) >= 1);
-        assert!(pf["top_rules"].as_array().unwrap().len() >= 1, "scoring v2 expuesto");
+        assert!(
+            pf["top_rules"].as_array().unwrap().len() >= 1,
+            "scoring v2 expuesto"
+        );
         assert!(pf["suggestion"].is_string(), "sugerencia presente");
     }
 
@@ -4076,8 +4608,13 @@ mod tests {
         let mut agent = AgentR::with_state_path(path.clone());
         for k in 0..10 {
             agent.record_error(
-                ErrorCategory::Other, ErrorSeverity::Warning,
-                "op", &format!("w #{k}"), "y", &[], "p",
+                ErrorCategory::Other,
+                ErrorSeverity::Warning,
+                "op",
+                &format!("w #{k}"),
+                "y",
+                &[],
+                "p",
             );
         }
         // Con debounce (intervalo 2 s o 5k ops), 10 ops NO disparan flush:
@@ -4101,8 +4638,13 @@ mod tests {
         // job se encola al writer background. Esperamos que el writer corra.
         for k in 0..(FLUSH_MAX_OPS + 100) {
             agent.record_error(
-                ErrorCategory::Other, ErrorSeverity::Warning,
-                "flood", &format!("w #{k}"), "y", &[], "p",
+                ErrorCategory::Other,
+                ErrorSeverity::Warning,
+                "flood",
+                &format!("w #{k}"),
+                "y",
+                &[],
+                "p",
             );
         }
         // El writer background tiene hasta ~2 s para comprometer el job.
@@ -4115,8 +4657,10 @@ mod tests {
                     break; // el flusher comprometió el snapshot batch
                 }
             }
-            assert!(std::time::Instant::now() < deadline,
-                "el writer background no comprometió tras FLUSH_MAX_OPS");
+            assert!(
+                std::time::Instant::now() < deadline,
+                "el writer background no comprometió tras FLUSH_MAX_OPS"
+            );
             std::thread::sleep(Duration::from_millis(100));
         }
         agent.flush().unwrap();
@@ -4128,8 +4672,13 @@ mod tests {
         let mut agent = AgentR::new_ephemeral();
         for k in 0..5 {
             agent.record_error(
-                ErrorCategory::Other, ErrorSeverity::Warning,
-                "evict_op", &format!("w #{k}"), "y", &[], "p",
+                ErrorCategory::Other,
+                ErrorSeverity::Warning,
+                "evict_op",
+                &format!("w #{k}"),
+                "y",
+                &[],
+                "p",
             );
         }
         // Purga manual (el camino de evict_oldest) x3: quedan los 2 últimos.
@@ -4137,7 +4686,11 @@ mod tests {
         agent.evict_oldest();
         agent.evict_oldest();
         let ids: Vec<u64> = agent.errors().iter().map(|e| e.id).collect();
-        assert_eq!(ids, vec![4, 5], "orden de inserción preservado tras purgas O(1)");
+        assert_eq!(
+            ids,
+            vec![4, 5],
+            "orden de inserción preservado tras purgas O(1)"
+        );
         assert_eq!(agent.stats.unique_incidents, 2);
         // errors() devuelve slice contiguo aunque el deque haya rotado.
         assert_eq!(agent.errors().len(), 2);
@@ -4151,8 +4704,16 @@ mod rsi_capa2_tests {
     #[test]
     fn test_insight_dedup_y_confirmacion() {
         let mut a = AgentR::new_ephemeral();
-        let id1 = a.record_insight("deploy_prod", "Siempre chequear el health endpoint antes del switch de tráfico", &[1, 2]);
-        let id2 = a.record_insight("deploy_prod", "Siempre chequear el health endpoint antes del switch de tráfico", &[3]);
+        let id1 = a.record_insight(
+            "deploy_prod",
+            "Siempre chequear el health endpoint antes del switch de tráfico",
+            &[1, 2],
+        );
+        let id2 = a.record_insight(
+            "deploy_prod",
+            "Siempre chequear el health endpoint antes del switch de tráfico",
+            &[3],
+        );
         assert_eq!(id1, id2, "insight duplicado = NOOP");
         assert!(a.confirm_insight(id1));
         assert_eq!(a.insights[0].confirmations, 1);
@@ -4162,7 +4723,12 @@ mod rsi_capa2_tests {
     #[test]
     fn test_skill_recall_solo_verificados() {
         let mut a = AgentR::new_ephemeral();
-        let s1 = a.record_skill("deploy_prod", "blue_green_switch", "1. drain 2. switch 3. verify", Some("rcpt_x".into()));
+        let s1 = a.record_skill(
+            "deploy_prod",
+            "blue_green_switch",
+            "1. drain 2. switch 3. verify",
+            Some("rcpt_x".into()),
+        );
         let _s2 = a.record_skill("deploy_prod", "skill_sin_receipt", "pasos", None);
         let recalled = a.recall_skills("deploy_prod");
         assert_eq!(recalled.len(), 1, "sin receipt y sin uso => NO recall");
@@ -4175,10 +4741,29 @@ mod rsi_capa2_tests {
     #[test]
     fn test_lesson_reflexion_persiste() {
         let mut a = AgentR::new_ephemeral();
-        let id = a.record_error(ErrorCategory::Timeout, ErrorSeverity::Error, "bench_run",
-            "timeout en fase 2", "gpu sync faltante", &["bench"], "");
-        assert!(a.set_lesson(id, "fix: sincronizar ctx antes de medir", Some("rcpt_fix1".into())));
-        assert_eq!(a.errors.iter().find(|e| e.id == id).unwrap().lesson.as_deref(), Some("fix: sincronizar ctx antes de medir"));
+        let id = a.record_error(
+            ErrorCategory::Timeout,
+            ErrorSeverity::Error,
+            "bench_run",
+            "timeout en fase 2",
+            "gpu sync faltante",
+            &["bench"],
+            "",
+        );
+        assert!(a.set_lesson(
+            id,
+            "fix: sincronizar ctx antes de medir",
+            Some("rcpt_fix1".into())
+        ));
+        assert_eq!(
+            a.errors
+                .iter()
+                .find(|e| e.id == id)
+                .unwrap()
+                .lesson
+                .as_deref(),
+            Some("fix: sincronizar ctx antes de medir")
+        );
     }
 
     #[test]
@@ -4189,18 +4774,28 @@ mod rsi_capa2_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let store = ReceiptStore::open_no_env(&dir).unwrap();
-        let rid = store.issue(&serde_json::json!({"outcome": "hit", "op": "x"})).map(|r| r.id).ok();
+        let rid = store
+            .issue(&serde_json::json!({"outcome": "hit", "op": "x"}))
+            .map(|r| r.id)
+            .ok();
 
         let w0 = a.tuning_stats().2;
         // hit SIN receipt: hit_unpromoted (W constante)
         let (o1, w1, p1) = a.tuning_feedback_star(Some(7), Some(7), &store, None);
-        assert_eq!(o1, "hit_unpromoted"); assert!(!p1); assert_eq!(w1, w0);
+        assert_eq!(o1, "hit_unpromoted");
+        assert!(!p1);
+        assert_eq!(w1, w0);
         // hit CON receipt válido: promociona (W sube)
         let (o2, w2, p2) = a.tuning_feedback_star(Some(7), Some(7), &store, rid.as_deref());
-        assert_eq!(o2, "hit"); assert!(p2); assert!(w2 > w0);
+        assert_eq!(o2, "hit");
+        assert!(p2);
+        assert!(w2 > w0);
         // receipt inválido: no promociona
-        let (o3, w3, p3) = a.tuning_feedback_star(Some(7), Some(7), &store, Some("rcpt_inexistente"));
-        assert_eq!(o3, "hit_unpromoted"); assert!(!p3); assert_eq!(w3, w2);
+        let (o3, w3, p3) =
+            a.tuning_feedback_star(Some(7), Some(7), &store, Some("rcpt_inexistente"));
+        assert_eq!(o3, "hit_unpromoted");
+        assert!(!p3);
+        assert_eq!(w3, w2);
         // miss castiga normal
         let (_, w4, _) = a.tuning_feedback_star(Some(7), None, &store, rid.as_deref());
         assert!(w4 < w2);
@@ -4216,12 +4811,15 @@ mod rsi_capa2_tests {
         for i in 0..250 {
             meta_curiosity::ask_custom(
                 &mut a,
-                CriticalPoint::SecurityFinding { finding: format!("flood {i}") },
+                CriticalPoint::SecurityFinding {
+                    finding: format!("flood {i}"),
+                },
                 format!("pregunta flood {i}"),
                 crate::meta_curiosity::Priority::Low,
             );
         }
-        let abiertas = a.questions_iter()
+        let abiertas = a
+            .questions_iter()
             .filter(|q| q.status == crate::meta_curiosity::QStatus::Open)
             .count();
         assert_eq!(abiertas, 200, "GC FIFO debe mantener el tope de abiertas");
@@ -4232,7 +4830,10 @@ mod rsi_capa2_tests {
         let gigante = "x".repeat(100_000);
         let id = meta_curiosity::ask_custom(
             &mut a,
-            CriticalPoint::Surprise { expected: "a".into(), got: gigante },
+            CriticalPoint::Surprise {
+                expected: "a".into(),
+                got: gigante,
+            },
             "pregunta con payload gigante truncado".repeat(400), // >4KB
             crate::meta_curiosity::Priority::Low,
         );
@@ -4251,7 +4852,9 @@ mod rsi_capa2_tests {
         });
         let r1 = a.validate_output_v2_full("probe", &sin_mecanismo, None, None);
         assert!(
-            r1.issues.iter().any(|i| i.description.contains("sin mecanismo visible")),
+            r1.issues
+                .iter()
+                .any(|i| i.description.contains("sin mecanismo visible")),
             "claim de verificación sin mecanismo debe producir issue N0"
         );
         // el mismo chequeo CON mecanismo explícito no produce la issue
@@ -4261,7 +4864,9 @@ mod rsi_capa2_tests {
         });
         let r2 = a.validate_output_v2_full("probe", &con_mecanismo, None, None);
         assert!(
-            !r2.issues.iter().any(|i| i.description.contains("sin mecanismo visible")),
+            !r2.issues
+                .iter()
+                .any(|i| i.description.contains("sin mecanismo visible")),
             "con ok_codes no hay issue de mecanismo"
         );
     }
@@ -4276,11 +4881,15 @@ mod rsi_capa2_tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let store = ReceiptStore::open_no_env(&dir).unwrap();
-        let rid = store.issue(&serde_json::json!({"outcome": "hit"})).map(|r| r.id).ok();
+        let rid = store
+            .issue(&serde_json::json!({"outcome": "hit"}))
+            .map(|r| r.id)
+            .ok();
 
         // 1er uso: promociona (W sube)
         let (o1, w1, p1) = a.tuning_feedback_star(Some(3), Some(3), &store, rid.as_deref());
-        assert_eq!(o1, "hit"); assert!(p1);
+        assert_eq!(o1, "hit");
+        assert!(p1);
         let w0 = 3.0_f64;
         assert!(w1 > w0);
         // 49 re-uses del MISMO receipt: NUNCA más promociona
@@ -4291,9 +4900,14 @@ mod rsi_capa2_tests {
             assert_eq!(w, w1, "W congelado tras el burn");
         }
         // Otro receipt legítimo SÍ promociona (el burn es por-id, no global)
-        let rid2 = store.issue(&serde_json::json!({"outcome": "hit2"})).map(|r| r.id).ok();
+        let rid2 = store
+            .issue(&serde_json::json!({"outcome": "hit2"}))
+            .map(|r| r.id)
+            .ok();
         let (o2, w2, p2) = a.tuning_feedback_star(Some(3), Some(3), &store, rid2.as_deref());
-        assert_eq!(o2, "hit"); assert!(p2); assert!(w2 > w1);
+        assert_eq!(o2, "hit");
+        assert!(p2);
+        assert!(w2 > w1);
         // Roundtrip: los quemados persisten
         let dir2 = std::env::temp_dir().join(format!("rsi_burn_rt_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir2);
@@ -4322,7 +4936,9 @@ mod rsi_capa2_tests {
         let created = a.induce_workflows(3, 2);
         assert_eq!(created.len(), 1, "un workflow build→test→deploy");
         let skills = a.recall_skills("build");
-        assert!(skills.iter().any(|s| s.name.contains("workflow:build→test→deploy")));
+        assert!(skills
+            .iter()
+            .any(|s| s.name.contains("workflow:build→test→deploy")));
     }
 
     #[test]
@@ -4333,16 +4949,31 @@ mod rsi_capa2_tests {
         let path = dir.join("state.json");
         {
             let mut a = AgentR::with_state_path(path.clone());
-            let eid = a.record_error(ErrorCategory::OutputDrift, ErrorSeverity::Error, "scrape",
-                "conn reset", "rate limit", &["web"], "");
+            let eid = a.record_error(
+                ErrorCategory::OutputDrift,
+                ErrorSeverity::Error,
+                "scrape",
+                "conn reset",
+                "rate limit",
+                &["web"],
+                "",
+            );
             a.record_insight("scrape", "backoff exponencial ante 429", &[eid]);
-            let sid = a.record_skill("scrape", "politeness_backoff", "retry con backoff 1s→32s", Some("rcpt_ok".into()));
+            let sid = a.record_skill(
+                "scrape",
+                "politeness_backoff",
+                "retry con backoff 1s→32s",
+                Some("rcpt_ok".into()),
+            );
             a.mark_skill_used(sid);
             a.flush().expect("flush");
         }
         let b = AgentR::with_state_path(path);
         assert_eq!(b.insights.len(), 1);
-        assert_eq!(b.insights[0].insight.as_ref(), "backoff exponencial ante 429");
+        assert_eq!(
+            b.insights[0].insight.as_ref(),
+            "backoff exponencial ante 429"
+        );
         assert_eq!(b.skills.len(), 1);
         assert_eq!(b.skills[0].times_used, 1);
         let _ = std::fs::remove_dir_all(&dir);

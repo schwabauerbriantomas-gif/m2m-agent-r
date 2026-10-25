@@ -149,9 +149,14 @@ where
     let best = grid
         .iter()
         .max_by(|a, b| {
-            a.score.partial_cmp(&b.score)
+            a.score
+                .partial_cmp(&b.score)
                 .unwrap_or(std::cmp::Ordering::Equal)
-                .then(a.tiebreak.partial_cmp(&b.tiebreak).unwrap_or(std::cmp::Ordering::Equal))
+                .then(
+                    a.tiebreak
+                        .partial_cmp(&b.tiebreak)
+                        .unwrap_or(std::cmp::Ordering::Equal),
+                )
         })
         .cloned()
         .expect("grid no vacío");
@@ -211,11 +216,22 @@ mod tests {
         let store = ReceiptStore::open_no_env(&dir).unwrap();
         let mut a = AgentR::new_ephemeral(); // W inicial 3.0
 
-        let space = EvolveSpace { w_values: vec![3.0, 1.0, 0.5] };
+        let space = EvolveSpace {
+            w_values: vec![3.0, 1.0, 0.5],
+        };
         // Evaluator sintético: score = función determinista que favorece w=1.0
-        let report = evolve(&mut a, &store, &space, |_agent, w| {
-            ReplayScore { w, score: 100.0 - (w - 1.0).abs() * 10.0, tiebreak: 0.0, n: 10 }
-        }, 0.5);
+        let report = evolve(
+            &mut a,
+            &store,
+            &space,
+            |_agent, w| ReplayScore {
+                w,
+                score: 100.0 - (w - 1.0).abs() * 10.0,
+                tiebreak: 0.0,
+                n: 10,
+            },
+            0.5,
+        );
         assert_eq!(report.incumbent_w, 3.0);
         assert_eq!(report.best_w, 1.0);
         assert!(report.promoted, "1.0 supera 3.0 por 15 >= 0.5");
@@ -234,13 +250,24 @@ mod tests {
         let mut a = AgentR::new_ephemeral();
         a.set_w_content(3.103); // W del swarm real: NO está en el grid 0.5..4.0
 
-        let space = EvolveSpace { w_values: vec![3.0, 3.5, 4.0] };
+        let space = EvolveSpace {
+            w_values: vec![3.0, 3.5, 4.0],
+        };
         // Evaluator: score = 2 hits para cualquier W (empate con el incumbent
         // que también daría 2). Con el bug viejo: incumbent_score=-inf =>
         // promovía "gratis". Con el fix: empate => NO promociona (sin margen).
-        let report = evolve(&mut a, &store, &space, |_agent, w| {
-            ReplayScore { w, score: 2.0, tiebreak: 0.0, n: 3 }
-        }, 0.5);
+        let report = evolve(
+            &mut a,
+            &store,
+            &space,
+            |_agent, w| ReplayScore {
+                w,
+                score: 2.0,
+                tiebreak: 0.0,
+                n: 3,
+            },
+            0.5,
+        );
         assert!(!report.promoted, "empate total no promociona");
         assert_eq!(report.incumbent_score, 2.0, "incumbent medido (no -inf)");
         assert_eq!(a.tuning_stats().2, 3.103, "W del incumbent conservado");
@@ -257,11 +284,22 @@ mod tests {
         let store = ReceiptStore::open_no_env(&dir).unwrap();
         let mut a = AgentR::new_ephemeral();
 
-        let space = EvolveSpace { w_values: vec![3.0, 3.4] };
+        let space = EvolveSpace {
+            w_values: vec![3.0, 3.4],
+        };
         // Score diff 0.4 < margin 0.5 => NO promociona (anti-ruido)
-        let report = evolve(&mut a, &store, &space, |_agent, w| {
-            ReplayScore { w, score: 30.0 + (w - 3.0) * 0.4 / 0.4, tiebreak: 0.0, n: 10 }
-        }, 0.5);
+        let report = evolve(
+            &mut a,
+            &store,
+            &space,
+            |_agent, w| ReplayScore {
+                w,
+                score: 30.0 + (w - 3.0) * 0.4 / 0.4,
+                tiebreak: 0.0,
+                n: 10,
+            },
+            0.5,
+        );
         assert!(!report.promoted);
         assert_eq!(a.tuning_stats().2, 3.0, "incumbent conserva W");
         let _ = std::fs::remove_dir_all(&dir);

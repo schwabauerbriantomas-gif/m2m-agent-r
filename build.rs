@@ -41,12 +41,13 @@ fn main() {
             kernel_src,
         ]);
 
-        let status = cmd
-            .status()
-            .expect("Failed to run nvcc");
+        let status = cmd.status().expect("Failed to run nvcc");
 
         if status.success() {
-            println!("cargo:warning=[m2m] CUDA kernels compiled to PTX: {}", ptx_output.display());
+            println!(
+                "cargo:warning=[m2m] CUDA kernels compiled to PTX: {}",
+                ptx_output.display()
+            );
             // Tell cargo to re-run if kernels change
             println!("cargo:rerun-if-changed=kernels/distance.cu");
             // Embed PTX path as env variable
@@ -68,12 +69,12 @@ fn main() {
             if let Some(ref cl) = cl_exe {
                 ecmd.args(["-ccbin", cl]);
             }
-            ecmd.args([
-                &format!("--output-file={}", egrad_ptx.display()),
-                egrad_src,
-            ]);
+            ecmd.args([&format!("--output-file={}", egrad_ptx.display()), egrad_src]);
             if ecmd.status().map(|s| s.success()).unwrap_or(false) {
-                println!("cargo:warning=[m2m] energy_gradient PTX: {}", egrad_ptx.display());
+                println!(
+                    "cargo:warning=[m2m] energy_gradient PTX: {}",
+                    egrad_ptx.display()
+                );
                 println!("cargo:rerun-if-changed=kernels/energy_gradient.cu");
                 println!("cargo:rustc-env=M2M_EGRAD_PTX_PATH={}", egrad_ptx.display());
             } else {
@@ -83,7 +84,9 @@ fn main() {
             println!("cargo:warning=[m2m] nvcc compilation failed — GPU kernels unavailable");
         }
     } else {
-        println!("cargo:warning=[m2m] nvcc not found — GPU kernels unavailable, using cudarc defaults");
+        println!(
+            "cargo:warning=[m2m] nvcc not found — GPU kernels unavailable, using cudarc defaults"
+        );
     }
 }
 
@@ -110,20 +113,33 @@ fn which_nvcc() -> Option<String> {
 
 fn find_msvc_cl() -> Option<String> {
     // Search BuildTools for cl.exe
-    let base = PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC");
+    let base = PathBuf::from(
+        r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC",
+    );
     if let Ok(entries) = std::fs::read_dir(&base) {
         for entry in entries.flatten() {
-            let cl = entry.path().join("bin").join("Hostx64").join("x64").join("cl.exe");
+            let cl = entry
+                .path()
+                .join("bin")
+                .join("Hostx64")
+                .join("x64")
+                .join("cl.exe");
             if cl.exists() {
                 return Some(cl.to_string_lossy().to_string());
             }
         }
     }
     // Also check Community edition
-    let base2 = PathBuf::from(r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC");
+    let base2 =
+        PathBuf::from(r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC");
     if let Ok(entries) = std::fs::read_dir(&base2) {
         for entry in entries.flatten() {
-            let cl = entry.path().join("bin").join("Hostx64").join("x64").join("cl.exe");
+            let cl = entry
+                .path()
+                .join("bin")
+                .join("Hostx64")
+                .join("x64")
+                .join("cl.exe");
             if cl.exists() {
                 return Some(cl.to_string_lossy().to_string());
             }

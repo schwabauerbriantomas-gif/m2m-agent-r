@@ -4,9 +4,9 @@ use m2m_vector_search::config::M2MConfig;
 use m2m_vector_search::encoding::FullEmbeddingBuilder;
 use m2m_vector_search::splats::SplatStore;
 use ndarray::{Array1, Array2};
+use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use rand::Rng;
 
 fn test_config() -> M2MConfig {
     let mut c = M2MConfig::default();
@@ -42,7 +42,11 @@ fn test_splat_store_workflow() {
     let results = store.find_neighbors(&query.view(), 10);
 
     assert_eq!(results.len(), 10);
-    assert!(results[0].distance < 0.01, "First neighbor distance too high: {}", results[0].distance);
+    assert!(
+        results[0].distance < 0.01,
+        "First neighbor distance too high: {}",
+        results[0].distance
+    );
     assert_eq!(results[0].index, 0);
 
     // Distances should be increasing
@@ -117,7 +121,12 @@ fn test_encoding_roundtrip() {
         &[colors[[0, 0]], colors[[0, 1]], colors[[0, 2]]],
         opacities[0],
         &[scales[[0, 0]], scales[[0, 1]], scales[[0, 2]]],
-        &[rotations[[0, 0]], rotations[[0, 1]], rotations[[0, 2]], rotations[[0, 3]]],
+        &[
+            rotations[[0, 0]],
+            rotations[[0, 1]],
+            rotations[[0, 2]],
+            rotations[[0, 3]],
+        ],
     );
     assert_eq!(single.len(), 640);
     assert!(single.iter().all(|&v| v.is_finite()));

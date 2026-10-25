@@ -32,8 +32,11 @@ use std::fs;
 
 fn map_category(ftype: &str) -> ErrorCategory {
     let t = ftype.to_lowercase();
-    if t.contains("strategy") || t.contains("lateral") || t.contains("goal")
-        || t.contains("planning") || t.contains("spatial")
+    if t.contains("strategy")
+        || t.contains("lateral")
+        || t.contains("goal")
+        || t.contains("planning")
+        || t.contains("spatial")
     {
         ErrorCategory::BadAssumption
     } else if t.contains("loop") || t.contains("repeat") {
@@ -50,7 +53,11 @@ fn map_category(ftype: &str) -> ErrorCategory {
 fn situation_of(ep: &Value, dp: i64) -> String {
     let mut s = String::new();
     if let Some(steps) = ep["snapshot"].get("trajectory").and_then(|t| t.as_array()) {
-        let upto = if dp > 0 { (dp as usize).min(steps.len()) } else { steps.len() };
+        let upto = if dp > 0 {
+            (dp as usize).min(steps.len())
+        } else {
+            steps.len()
+        };
         for st in &steps[..upto] {
             s.push_str(st.get("obs").and_then(|o| o.as_str()).unwrap_or(""));
             s.push(' ');
@@ -172,7 +179,12 @@ fn main() {
         };
 
         // 1. PREDICCIÓN con el W vigente.
-        let pf = agent.preflight_v2_hybrid_w(&game, &[&model_short, "babyai", "level-1"], &situation, w_content);
+        let pf = agent.preflight_v2_hybrid_w(
+            &game,
+            &[&model_short, "babyai", "level-1"],
+            &situation,
+            w_content,
+        );
         let pred = pf.top_rules.first().map(|r| r.id);
 
         // 2. REALIDAD: ¿la regla predicha es de las correctas?
@@ -236,10 +248,19 @@ fn main() {
         let m = ep["model"].as_str().unwrap_or("unknown");
         let model_short = m.rsplit('/').next().unwrap_or(m);
         let situation = situation_of(ep, dp);
-        let pf = agent.preflight_v2_hybrid_w(&game_of(ep), &[model_short, "babyai", "level-1"], &situation, w_content);
+        let pf = agent.preflight_v2_hybrid_w(
+            &game_of(ep),
+            &[model_short, "babyai", "level-1"],
+            &situation,
+            w_content,
+        );
         let top: Vec<u64> = pf.top_rules.iter().map(|r| r.id).collect();
         hn += 1;
-        if top.first().map(|id| correct_rules.contains(id)).unwrap_or(false) {
+        if top
+            .first()
+            .map(|id| correct_rules.contains(id))
+            .unwrap_or(false)
+        {
             h1 += 1;
         }
         if top.iter().any(|id| correct_rules.contains(id)) {
@@ -248,7 +269,13 @@ fn main() {
     }
 
     println!("=== AUTO-TUNING DE W_CONTENT (loop de feedback real) ===");
-    println!("fase tuning: {} tareas | hits {} misses {} abstenciones {}", tuning.len(), hits, misses, abst);
+    println!(
+        "fase tuning: {} tareas | hits {} misses {} abstenciones {}",
+        tuning.len(),
+        hits,
+        misses,
+        abst
+    );
     println!("W final: {:.3} (fábrica: 3.000)", w_content);
     println!(
         "holdout (W congelado): top1 {}/{}, top3 {}/{}",

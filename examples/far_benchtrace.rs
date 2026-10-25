@@ -32,8 +32,11 @@ use std::fs;
 
 fn map_category(ftype: &str) -> ErrorCategory {
     let t = ftype.to_lowercase();
-    if t.contains("strategy") || t.contains("lateral") || t.contains("goal")
-        || t.contains("planning") || t.contains("spatial")
+    if t.contains("strategy")
+        || t.contains("lateral")
+        || t.contains("goal")
+        || t.contains("planning")
+        || t.contains("spatial")
     {
         ErrorCategory::BadAssumption
     } else if t.contains("loop") || t.contains("repeat") {
@@ -193,8 +196,14 @@ fn main() {
         .filter(|r| r["n_correct_rules"].as_u64().unwrap_or(0) > 0)
         .collect();
     let nl = with_lessons.len();
-    let top1 = with_lessons.iter().filter(|r| r["top1_hit"] == true).count();
-    let top3 = with_lessons.iter().filter(|r| r["top3_hit"] == true).count();
+    let top1 = with_lessons
+        .iter()
+        .filter(|r| r["top1_hit"] == true)
+        .count();
+    let top3 = with_lessons
+        .iter()
+        .filter(|r| r["top3_hit"] == true)
+        .count();
     let opm = results.iter().filter(|r| r["op_matters"] == true).count();
     let mean = |vals: Vec<f64>| {
         if vals.is_empty() {
@@ -203,8 +212,18 @@ fn main() {
             vals.iter().sum::<f64>() / vals.len() as f64
         }
     };
-    let mean_top = mean(with_lessons.iter().filter_map(|r| r["top_score"].as_f64()).collect());
-    let mean_ctl = mean(results.iter().filter_map(|r| r["control_score"].as_f64()).collect());
+    let mean_top = mean(
+        with_lessons
+            .iter()
+            .filter_map(|r| r["top_score"].as_f64())
+            .collect(),
+    );
+    let mean_ctl = mean(
+        results
+            .iter()
+            .filter_map(|r| r["control_score"].as_f64())
+            .collect(),
+    );
 
     println!(
         "\n=== Especificidad con {} reglas (distractores incluidos) en memoria ===",
@@ -215,19 +234,31 @@ fn main() {
         "top1_precision (lección correcta es la regla #1): {}/{} = {:.1}%",
         top1,
         nl,
-        if nl > 0 { top1 as f64 / nl as f64 * 100.0 } else { 0.0 }
+        if nl > 0 {
+            top1 as f64 / nl as f64 * 100.0
+        } else {
+            0.0
+        }
     );
     println!(
         "top3_recall (alguna lección correcta en top-3):   {}/{} = {:.1}%",
         top3,
         nl,
-        if nl > 0 { top3 as f64 / nl as f64 * 100.0 } else { 0.0 }
+        if nl > 0 {
+            top3 as f64 / nl as f64 * 100.0
+        } else {
+            0.0
+        }
     );
     println!(
         "op_matters (score op-real > op-control):          {}/{} = {:.1}%",
         opm,
         n,
-        if n > 0 { opm as f64 / n as f64 * 100.0 } else { 0.0 }
+        if n > 0 {
+            opm as f64 / n as f64 * 100.0
+        } else {
+            0.0
+        }
     );
     println!(
         "score medio top-1 (op real): {:.2} | control (op no vista): {:.2}",
@@ -235,8 +266,14 @@ fn main() {
     );
 
     // Desglose cross-model (lecciones de un modelo aplicadas a tests de otro)
-    let cross: Vec<&&Value> = with_lessons.iter().filter(|r| r["cross_model"] == true).collect();
-    let same: Vec<&&Value> = with_lessons.iter().filter(|r| r["cross_model"] == false).collect();
+    let cross: Vec<&&Value> = with_lessons
+        .iter()
+        .filter(|r| r["cross_model"] == true)
+        .collect();
+    let same: Vec<&&Value> = with_lessons
+        .iter()
+        .filter(|r| r["cross_model"] == false)
+        .collect();
     for (name, cohort) in [("mismo-modelo", &same), ("cross-modelo", &cross)] {
         if !cohort.is_empty() {
             let t1 = cohort.iter().filter(|r| r["top1_hit"] == true).count();

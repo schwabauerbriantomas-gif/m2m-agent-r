@@ -48,13 +48,15 @@ fn main() {
         std::mem::size_of::<BoxedVariant>(),
         std::mem::align_of::<BoxedVariant>()
     );
-    println!("  String={} Box<str>={} Vec<u32>={} Option<u64>={}",
+    println!(
+        "  String={} Box<str>={} Vec<u32>={} Option<u64>={}",
         std::mem::size_of::<String>(),
         std::mem::size_of::<Box<str>>(),
         std::mem::size_of::<Vec<u32>>(),
         std::mem::size_of::<Option<u64>>(),
     );
-    println!("  ErrorCategory={} ErrorSeverity={}",
+    println!(
+        "  ErrorCategory={} ErrorSeverity={}",
         std::mem::size_of::<ErrorCategory>(),
         std::mem::size_of::<ErrorSeverity>(),
     );
@@ -71,9 +73,17 @@ fn main() {
         + 24         /* Vec buffer String ptrs (cap inicial 4 tras 2.51 avg: bin16(2.51*24)=96? medimos abajo) */
         ;
     println!("\n== heap teórico por registro (bins glibc 16 B) ==");
-    println!("strings + vec-buf aproximado: ~{} B (sin buffer de String de tags)", heap_actual);
-    println!("  bins: op={} what={} why={} prevention={}",
-        bin16(15), bin16(85), bin16(99), bin16(82));
+    println!(
+        "strings + vec-buf aproximado: ~{} B (sin buffer de String de tags)",
+        heap_actual
+    );
+    println!(
+        "  bins: op={} what={} why={} prevention={}",
+        bin16(15),
+        bin16(85),
+        bin16(99),
+        bin16(82)
+    );
 
     // ── 3) DEDIUM: estabilidad de punteros heap con Vec append-only ────
     // (Usamos un espejo del layout LEGACY: el principio DEDIUM es el mismo
@@ -139,21 +149,53 @@ fn main() {
         z ^ (z >> 31)
     };
     let ops = [
-        "reindex_collection", "store_memory", "search_similar", "rebuild_hnsw_index",
-        "merge_splats", "validate_output_chain", "promote_rule", "distill_lessons",
-        "snapshot_metadata", "gc_expired_splats", "preflight_mutation", "audit_receipts",
-        "consolidate_memory", "expand_context", "route_query",
+        "reindex_collection",
+        "store_memory",
+        "search_similar",
+        "rebuild_hnsw_index",
+        "merge_splats",
+        "validate_output_chain",
+        "promote_rule",
+        "distill_lessons",
+        "snapshot_metadata",
+        "gc_expired_splats",
+        "preflight_mutation",
+        "audit_receipts",
+        "consolidate_memory",
+        "expand_context",
+        "route_query",
     ];
     let tags_pool = [
-        "gpu", "cpu", "nightly", "ci", "prod", "index", "benchmark", "large-batch",
-        "cold-start", "retry", "timeout-window", "sqlite", "hot-loop", "high-recall",
-        "precision@10", "hnsw", "warming", "crash-recovery", "sha256", "receipt",
+        "gpu",
+        "cpu",
+        "nightly",
+        "ci",
+        "prod",
+        "index",
+        "benchmark",
+        "large-batch",
+        "cold-start",
+        "retry",
+        "timeout-window",
+        "sqlite",
+        "hot-loop",
+        "high-recall",
+        "precision@10",
+        "hnsw",
+        "warming",
+        "crash-recovery",
+        "sha256",
+        "receipt",
     ];
     let (mut l_op, mut l_what, mut l_why, mut l_prev, mut l_tags, mut n_tag_str) =
         (0usize, 0usize, 0usize, 0usize, 0usize, 0usize);
     let n = 10_000usize;
     for i in 0..n {
-        let mut x = if i == 0 { seed.wrapping_mul(1) } else { seed ^ (i as u64).wrapping_mul(0x8000000000000001) };
+        let mut x = if i == 0 {
+            seed.wrapping_mul(1)
+        } else {
+            seed ^ (i as u64).wrapping_mul(0x8000000000000001)
+        };
         let r = splitmix(&mut x);
         let r2 = splitmix(&mut x);
         let r3 = splitmix(&mut x);
@@ -163,9 +205,15 @@ fn main() {
         let tags: Vec<&str> = (0..n_tags)
             .map(|k| tags_pool[((r >> (8 * (k + 1))) % tags_pool.len() as u64) as usize])
             .collect();
-        let what = format!("synthetic failure mode #{i}: {op} produced inconsistent state hash {:06x}", r & 0xFFFFFF);
+        let what = format!(
+            "synthetic failure mode #{i}: {op} produced inconsistent state hash {:06x}",
+            r & 0xFFFFFF
+        );
         let why = format!("root cause {:04x}: precondition violated before {op} (deterministic harness seed {seed})", r2 & 0xFFFF);
-        let prev = format!("verify preconditions of {op} and re-run with receipt {:04x} before commit", r3 & 0xFFFF);
+        let prev = format!(
+            "verify preconditions of {op} and re-run with receipt {:04x} before commit",
+            r3 & 0xFFFF
+        );
         l_op += op.len();
         l_what += what.len();
         l_why += why.len();
@@ -174,7 +222,8 @@ fn main() {
         n_tag_str += tags.iter().map(|t| t.len()).sum::<usize>();
     }
     println!("\n== longitudes medias del generador (n={n}) ==");
-    println!("  op={:.1} what={:.1} why={:.1} prevention={:.1} tags/reg={:.2} bytes/tag={:.1}",
+    println!(
+        "  op={:.1} what={:.1} why={:.1} prevention={:.1} tags/reg={:.2} bytes/tag={:.1}",
         l_op as f64 / n as f64,
         l_what as f64 / n as f64,
         l_why as f64 / n as f64,
@@ -201,7 +250,10 @@ fn main() {
         + 96.0 /* String[] del vec (cap 4, 24 B c/u) */
         + string_bin(7.4) * tags_n;
     println!("\n== heap/registro estimado ==");
-    println!("  actual        : {:.0} B (4 String + Vec<String> con bins)", heap_now);
+    println!(
+        "  actual        : {:.0} B (4 String + Vec<String> con bins)",
+        heap_now
+    );
     println!("  + Box<str> x3 : what/why/prev pasan de String a Box<str>: -8 B inline c/u (cap no almacenada), heap igual");
     println!("  + interner op/tags: op 24B inline -> 4, heap_op eliminado; tags Vec<String> 96+bin(tags) -> Vec<u32> ~16 B");
 }

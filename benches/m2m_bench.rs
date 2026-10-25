@@ -1,4 +1,4 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use ndarray::{Array1, Array2};
 use rand::Rng;
 
@@ -38,8 +38,11 @@ fn bench_encoding(c: &mut Criterion) {
     c.bench_function("full_embedding_single", |b| {
         b.iter(|| {
             builder.build_single(
-                black_box(&pos), black_box(&col),
-                black_box(0.9), black_box(&scale), black_box(&rot),
+                black_box(&pos),
+                black_box(&col),
+                black_box(0.9),
+                black_box(&scale),
+                black_box(&rot),
             );
         });
     });
@@ -54,8 +57,11 @@ fn bench_encoding(c: &mut Criterion) {
     c.bench_function("full_embedding_batch_1k", |b| {
         b.iter(|| {
             builder.build(
-                black_box(&positions), black_box(&colors),
-                black_box(&opacities), black_box(&scales), black_box(&rotations),
+                black_box(&positions),
+                black_box(&colors),
+                black_box(&opacities),
+                black_box(&scales),
+                black_box(&rotations),
             );
         });
     });
@@ -81,8 +87,11 @@ fn bench_energy(c: &mut Criterion) {
     c.bench_function("e_splats_vectorized_100x1k", |b| {
         b.iter(|| {
             ef.e_splats_vectorized(
-                black_box(&x), black_box(&mu),
-                black_box(&alpha), black_box(&kappa), 1000,
+                black_box(&x),
+                black_box(&mu),
+                black_box(&alpha),
+                black_box(&kappa),
+                1000,
             );
         });
     });
@@ -110,5 +119,12 @@ fn bench_clustering_transform(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, bench_kmeans, bench_encoding, bench_energy, bench_geometry, bench_clustering_transform);
+criterion_group!(
+    benches,
+    bench_kmeans,
+    bench_encoding,
+    bench_energy,
+    bench_geometry,
+    bench_clustering_transform
+);
 criterion_main!(benches);

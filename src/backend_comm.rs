@@ -45,7 +45,12 @@ pub struct BackendMessage {
 
 impl BackendMessage {
     /// Create a new message.
-    pub fn new(sender: &str, receiver: &str, msg_type: BackendMsgType, content: serde_json::Value) -> Self {
+    pub fn new(
+        sender: &str,
+        receiver: &str,
+        msg_type: BackendMsgType,
+        content: serde_json::Value,
+    ) -> Self {
         Self {
             sender: sender.to_string(),
             receiver: receiver.to_string(),
@@ -74,7 +79,9 @@ impl BackendMessage {
 
     /// Check if message has expired.
     pub fn is_expired(&self) -> bool {
-        if self.ttl_seconds <= 0.0 { return false; }
+        if self.ttl_seconds <= 0.0 {
+            return false;
+        }
         (now_secs() - self.timestamp) > self.ttl_seconds
     }
 
@@ -175,8 +182,10 @@ impl BackendComm {
     /// Register a backend.
     pub fn register_backend(&mut self, name: &str) {
         self.backends.insert(name.to_string(), now_secs());
-        self.latency_samples.insert(name.to_string(), VecDeque::with_capacity(1000));
-        self.health_status.insert(name.to_string(), BackendHealth::new(name));
+        self.latency_samples
+            .insert(name.to_string(), VecDeque::with_capacity(1000));
+        self.health_status
+            .insert(name.to_string(), BackendHealth::new(name));
     }
 
     /// Unregister a backend.
@@ -198,7 +207,11 @@ impl BackendComm {
 
     /// Convenience: send a search request.
     pub fn send_search_request(
-        &mut self, sender: &str, receiver: &str, query_id: &str, k: usize,
+        &mut self,
+        sender: &str,
+        receiver: &str,
+        query_id: &str,
+        k: usize,
     ) -> String {
         let content = serde_json::json!({"query_id": query_id, "k": k});
         let msg = BackendMessage::new(sender, receiver, BackendMsgType::SearchRequest, content)
@@ -208,8 +221,14 @@ impl BackendComm {
 
     /// Convenience: send a search result.
     pub fn send_search_result(
-        &mut self, sender: &str, request_id: &str, query_id: &str,
-        result_count: usize, latency_ms: f64, success: bool, error: &str,
+        &mut self,
+        sender: &str,
+        request_id: &str,
+        query_id: &str,
+        result_count: usize,
+        latency_ms: f64,
+        success: bool,
+        error: &str,
     ) -> String {
         self.pending_requests.remove(request_id);
         let content = serde_json::json!({
@@ -223,11 +242,14 @@ impl BackendComm {
 
     /// Receive messages for a receiver.
     pub fn receive(
-        &self, receiver: &str, msg_type: Option<BackendMsgType>,
+        &self,
+        receiver: &str,
+        msg_type: Option<BackendMsgType>,
         min_priority: Option<Priority>,
     ) -> Vec<&BackendMessage> {
         let min_p = min_priority.unwrap_or(Priority::Low);
-        self.messages.iter()
+        self.messages
+            .iter()
             .filter(|m| {
                 (m.receiver == receiver || m.receiver == "all")
                     && msg_type.map_or(true, |t| m.msg_type == t)
@@ -238,7 +260,13 @@ impl BackendComm {
     }
 
     /// Report an error.
-    pub fn report_error(&mut self, sender: &str, error: &str, query_id: &str, severity: Priority) -> String {
+    pub fn report_error(
+        &mut self,
+        sender: &str,
+        error: &str,
+        query_id: &str,
+        severity: Priority,
+    ) -> String {
         let content = serde_json::json!({"error": error, "query_id": query_id});
         let msg = BackendMessage::new(sender, "supervisor", BackendMsgType::Error, content)
             .with_priority(severity);
@@ -248,7 +276,9 @@ impl BackendComm {
     /// Record latency sample for a backend.
     pub fn record_latency(&mut self, backend: &str, latency_ms: f64) {
         if let Some(samples) = self.latency_samples.get_mut(backend) {
-            if samples.len() >= 1000 { samples.pop_front(); }
+            if samples.len() >= 1000 {
+                samples.pop_front();
+            }
             samples.push_back(latency_ms);
         }
     }
@@ -265,27 +295,38 @@ impl BackendComm {
 
     /// Get health of all backends.
     pub fn get_all_health(&self) -> HashMap<String, serde_json::Value> {
-        self.backends.keys().filter_map(|name| {
-            self.health_status.get(name).map(|h| {
-                (name.clone(), serde_json::json!({
-                    "healthy": h.is_healthy,
-                    "total_queries": h.total_queries,
-                    "total_errors": h.total_errors,
-                    "avg_latency_ms": h.avg_latency_ms,
-                }))
+        self.backends
+            .keys()
+            .filter_map(|name| {
+                self.health_status.get(name).map(|h| {
+                    (
+                        name.clone(),
+                        serde_json::json!({
+                            "healthy": h.is_healthy,
+                            "total_queries": h.total_queries,
+                            "total_errors": h.total_errors,
+                            "avg_latency_ms": h.avg_latency_ms,
+                        }),
+                    )
+                })
             })
-        }).collect()
+            .collect()
     }
 
     /// Calculate metrics for a backend.
     pub fn get_metrics(&self, backend: &str) -> BackendMetrics {
-        let mut metrics = BackendMetrics { name: backend.to_string(), ..Default::default() };
+        let mut metrics = BackendMetrics {
+            name: backend.to_string(),
+            ..Default::default()
+        };
         let health = self.health_status.get(backend);
         metrics.total_queries = health.map(|h| h.total_queries).unwrap_or(0);
         metrics.total_errors = health.map(|h| h.total_errors).unwrap_or(0);
         metrics.error_rate = if metrics.total_queries > 0 {
             metrics.total_errors as f64 / metrics.total_queries as f64
-        } else { 0.0 };
+        } else {
+            0.0
+        };
 
         if let Some(samples) = self.latency_samples.get(backend) {
             let mut sorted: Vec<f64> = samples.iter().cloned().collect();
@@ -294,8 +335,16 @@ impl BackendComm {
             if n > 0 {
                 metrics.avg_latency_ms = sorted.iter().sum::<f64>() / n as f64;
                 metrics.p50_latency_ms = sorted[(n as f64 * 0.50) as usize];
-                metrics.p95_latency_ms = if n > 1 { sorted[(n as f64 * 0.95) as usize] } else { sorted[0] };
-                metrics.p99_latency_ms = if n > 10 { sorted[(n as f64 * 0.99) as usize] } else { sorted[n - 1] };
+                metrics.p95_latency_ms = if n > 1 {
+                    sorted[(n as f64 * 0.95) as usize]
+                } else {
+                    sorted[0]
+                };
+                metrics.p99_latency_ms = if n > 10 {
+                    sorted[(n as f64 * 0.99) as usize]
+                } else {
+                    sorted[n - 1]
+                };
                 if metrics.avg_latency_ms > 0.0 {
                     metrics.queries_per_second = 1000.0 / metrics.avg_latency_ms;
                 }
@@ -357,7 +406,10 @@ pub struct CommStats {
 }
 
 fn now_secs() -> f64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs_f64()
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
 }
 
 fn generate_id() -> String {
@@ -376,7 +428,12 @@ mod tests {
     fn test_send_receive() {
         let mut comm = BackendComm::new(1000, 100, 30.0);
         comm.register_backend("cpu");
-        comm.send(BackendMessage::new("test", "cpu", BackendMsgType::SearchRequest, serde_json::json!({"q": 1})));
+        comm.send(BackendMessage::new(
+            "test",
+            "cpu",
+            BackendMsgType::SearchRequest,
+            serde_json::json!({"q": 1}),
+        ));
         let msgs = comm.receive("cpu", None, None);
         assert_eq!(msgs.len(), 1);
     }
@@ -392,8 +449,19 @@ mod tests {
     #[test]
     fn test_priority_filtering() {
         let mut comm = BackendComm::new(1000, 100, 30.0);
-        comm.send(BackendMessage::new("a", "b", BackendMsgType::Error, serde_json::json!({})).with_priority(Priority::Low));
-        comm.send(BackendMessage::new("a", "b", BackendMsgType::SearchRequest, serde_json::json!({})).with_priority(Priority::High));
+        comm.send(
+            BackendMessage::new("a", "b", BackendMsgType::Error, serde_json::json!({}))
+                .with_priority(Priority::Low),
+        );
+        comm.send(
+            BackendMessage::new(
+                "a",
+                "b",
+                BackendMsgType::SearchRequest,
+                serde_json::json!({}),
+            )
+            .with_priority(Priority::High),
+        );
         let high_only = comm.receive("b", None, Some(Priority::High));
         assert_eq!(high_only.len(), 1);
     }
@@ -411,7 +479,12 @@ mod tests {
 
     #[test]
     fn test_json_roundtrip() {
-        let msg = BackendMessage::new("a", "b", BackendMsgType::HealthCheck, serde_json::json!({"node": "n1"}));
+        let msg = BackendMessage::new(
+            "a",
+            "b",
+            BackendMsgType::HealthCheck,
+            serde_json::json!({"node": "n1"}),
+        );
         let json = msg.to_json();
         let parsed = BackendMessage::from_json(&json).unwrap();
         assert_eq!(parsed.sender, "a");

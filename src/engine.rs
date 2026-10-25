@@ -79,7 +79,11 @@ impl M2MEngine {
             .collect();
 
         // Sort by distance ascending
-        results.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+        results.sort_by(|a, b| {
+            a.distance
+                .partial_cmp(&b.distance)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
 
         results
     }
@@ -113,7 +117,14 @@ impl M2MEngine {
             .collect();
 
         let mut results: Vec<(usize, f32, usize, usize)> = (0..expert_indices.len())
-            .map(|i| (expert_indices[i], distances_sq[i], coarse_ids[i], fine_ids[i]))
+            .map(|i| {
+                (
+                    expert_indices[i],
+                    distances_sq[i],
+                    coarse_ids[i],
+                    fine_ids[i],
+                )
+            })
             .collect();
 
         results.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
@@ -160,9 +171,8 @@ impl M2MEngine {
         });
 
         // Sort only the top-k portion
-        indexed[..k_actual].sort_by(|a, b| {
-            a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
-        });
+        indexed[..k_actual]
+            .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
         indexed[..k_actual]
             .iter()
@@ -191,13 +201,7 @@ mod tests {
     fn test_empty_experts() {
         let engine = M2MEngine::default();
         let embeddings = Array2::<f32>::zeros((0, 3));
-        let results = engine.compute_expert_distances(
-            &[0.0, 0.0, 0.0],
-            &embeddings,
-            &[],
-            &[],
-            &[],
-        );
+        let results = engine.compute_expert_distances(&[0.0, 0.0, 0.0], &embeddings, &[], &[], &[]);
         assert!(results.is_empty());
     }
 

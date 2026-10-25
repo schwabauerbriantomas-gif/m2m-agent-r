@@ -12,9 +12,11 @@
 //! - __launch_bounds__(256) for optimal occupancy on sm_86
 //! - --use_fast_math and -O3 during PTX compilation
 
-use std::sync::Arc;
-use cudarc::driver::{CudaContext, CudaSlice, CudaFunction, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{
+    CudaContext, CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg,
+};
 use cudarc::nvrtc::Ptx;
+use std::sync::Arc;
 
 /// Persistent GPU state — keeps dataset in VRAM between calls.
 pub struct GpuIndex {
@@ -91,14 +93,24 @@ impl GpuIndex {
         let mut distances = Vec::with_capacity(n);
         for i in 0..n {
             let row = &data_back[i * dim..(i + 1) * dim];
-            let dist: f32 = query.iter().zip(row.iter()).map(|(a, b)| (a - b).powi(2)).sum();
+            let dist: f32 = query
+                .iter()
+                .zip(row.iter())
+                .map(|(a, b)| (a - b).powi(2))
+                .sum();
             distances.push(dist);
         }
         Some(distances)
     }
 
     /// Launch custom L2 distance PTX kernel.
-    fn launch_l2_kernel(&self, query: &[f32], data_gpu: &CudaSlice<f32>, n: usize, dim: usize) -> Option<Vec<f32>> {
+    fn launch_l2_kernel(
+        &self,
+        query: &[f32],
+        data_gpu: &CudaSlice<f32>,
+        n: usize,
+        dim: usize,
+    ) -> Option<Vec<f32>> {
         let ptx_path = option_env!("M2M_PTX_PATH")?;
         if ptx_path.is_empty() {
             return None;
@@ -128,7 +140,8 @@ impl GpuIndex {
         // Launch kernel
         // cudarc launch: params are (func, cfg, &mut output_gpu, ..., n, dim)
         unsafe {
-            self.stream.launch_builder(&func)
+            self.stream
+                .launch_builder(&func)
                 .arg(&query_gpu)
                 .arg(data_gpu)
                 .arg(&mut output_gpu)
@@ -161,7 +174,11 @@ impl GpuIndex {
             let mut distances = Vec::with_capacity(n);
             for i in 0..n {
                 let row = &data_back[i * dim..(i + 1) * dim];
-                let dist: f32 = q_slice.iter().zip(row.iter()).map(|(a, b)| (a - b).powi(2)).sum();
+                let dist: f32 = q_slice
+                    .iter()
+                    .zip(row.iter())
+                    .map(|(a, b)| (a - b).powi(2))
+                    .sum();
                 distances.push(dist);
             }
             all_dists.push(distances);
@@ -169,7 +186,14 @@ impl GpuIndex {
         Some(all_dists)
     }
 
-    fn launch_batch_l2_kernel(&self, queries: &[f32], data_gpu: &CudaSlice<f32>, n_queries: usize, n: usize, dim: usize) -> Option<Vec<Vec<f32>>> {
+    fn launch_batch_l2_kernel(
+        &self,
+        queries: &[f32],
+        data_gpu: &CudaSlice<f32>,
+        n_queries: usize,
+        n: usize,
+        dim: usize,
+    ) -> Option<Vec<Vec<f32>>> {
         let ptx_path = option_env!("M2M_PTX_PATH")?;
         if ptx_path.is_empty() {
             return None;
@@ -192,7 +216,8 @@ impl GpuIndex {
         };
 
         unsafe {
-            self.stream.launch_builder(&func)
+            self.stream
+                .launch_builder(&func)
                 .arg(&queries_gpu)
                 .arg(data_gpu)
                 .arg(&mut output_gpu)
@@ -236,7 +261,13 @@ impl GpuIndex {
         Some(distances)
     }
 
-    fn launch_cosine_kernel(&self, query: &[f32], data_gpu: &CudaSlice<f32>, n: usize, dim: usize) -> Option<Vec<f32>> {
+    fn launch_cosine_kernel(
+        &self,
+        query: &[f32],
+        data_gpu: &CudaSlice<f32>,
+        n: usize,
+        dim: usize,
+    ) -> Option<Vec<f32>> {
         let ptx_path = option_env!("M2M_PTX_PATH")?;
         if ptx_path.is_empty() {
             return None;
@@ -259,7 +290,8 @@ impl GpuIndex {
         };
 
         unsafe {
-            self.stream.launch_builder(&func)
+            self.stream
+                .launch_builder(&func)
                 .arg(&query_gpu)
                 .arg(data_gpu)
                 .arg(&mut output_gpu)
@@ -272,9 +304,15 @@ impl GpuIndex {
         self.stream.clone_dtoh(&output_gpu).ok()
     }
 
-    pub fn n_vectors(&self) -> usize { self.n_vectors }
-    pub fn dim(&self) -> usize { self.dim }
-    pub fn is_loaded(&self) -> bool { self.data_gpu.is_some() }
+    pub fn n_vectors(&self) -> usize {
+        self.n_vectors
+    }
+    pub fn dim(&self) -> usize {
+        self.dim
+    }
+    pub fn is_loaded(&self) -> bool {
+        self.data_gpu.is_some()
+    }
 
     /// GPU-only top-k search using combined distance+topk PTX kernel.
     /// Returns (indices, distances) for each query. No full distance matrix download.
@@ -290,7 +328,9 @@ impl GpuIndex {
         let data_gpu = self.data_gpu.as_ref()?;
 
         // Try PTX top-k kernel
-        if let Some(result) = self.launch_topk_kernel(queries, data_gpu, n_queries, n, dim, k, metric) {
+        if let Some(result) =
+            self.launch_topk_kernel(queries, data_gpu, n_queries, n, dim, k, metric)
+        {
             return Some(result);
         }
         eprintln!("[m2m] top-k PTX kernel unavailable, using fallback");
@@ -304,13 +344,16 @@ impl GpuIndex {
             self.batch_l2_distances(queries, n_queries)?
         };
 
-        let results: Vec<(Vec<usize>, Vec<f32>)> = all_dists.iter().map(|distances| {
-            let mut indices: Vec<usize> = (0..distances.len()).collect();
-            indices.sort_by(|a, b| distances[*a].partial_cmp(&distances[*b]).unwrap());
-            indices.truncate(k);
-            let dists: Vec<f32> = indices.iter().map(|&i| distances[i]).collect();
-            (indices, dists)
-        }).collect();
+        let results: Vec<(Vec<usize>, Vec<f32>)> = all_dists
+            .iter()
+            .map(|distances| {
+                let mut indices: Vec<usize> = (0..distances.len()).collect();
+                indices.sort_by(|a, b| distances[*a].partial_cmp(&distances[*b]).unwrap());
+                indices.truncate(k);
+                let dists: Vec<f32> = indices.iter().map(|&i| distances[i]).collect();
+                (indices, dists)
+            })
+            .collect();
         Some(results)
     }
 
@@ -331,8 +374,15 @@ impl GpuIndex {
         }
 
         let module = self.ctx.load_module(Ptx::from_file(ptx_path)).ok()?;
-        let kernel_name = if metric == "cosine" { "cosine_topk_kernel" } else { "l2_topk_kernel" };
-        eprintln!("[m2m] Launching {} PTX kernel (Q={}, N={}, D={}, K={})", kernel_name, n_queries, n, dim, k);
+        let kernel_name = if metric == "cosine" {
+            "cosine_topk_kernel"
+        } else {
+            "l2_topk_kernel"
+        };
+        eprintln!(
+            "[m2m] Launching {} PTX kernel (Q={}, N={}, D={}, K={})",
+            kernel_name, n_queries, n, dim, k
+        );
         let func: CudaFunction = module.load_function(kernel_name).ok()?;
 
         let queries_gpu = self.stream.clone_htod(queries).ok()?;
@@ -344,13 +394,14 @@ impl GpuIndex {
         let shared_mem_bytes = (dim + (block_dim as usize) * k * 2) * 4;
 
         let cfg = LaunchConfig {
-            grid_dim: (n_queries as u32, 1, 1),  // one block per query
+            grid_dim: (n_queries as u32, 1, 1), // one block per query
             block_dim: (block_dim, 1, 1),
             shared_mem_bytes: shared_mem_bytes as u32,
         };
 
         unsafe {
-            self.stream.launch_builder(&func)
+            self.stream
+                .launch_builder(&func)
                 .arg(&queries_gpu)
                 .arg(data_gpu)
                 .arg(&mut idx_gpu)
@@ -369,9 +420,11 @@ impl GpuIndex {
 
         let results: Vec<(Vec<usize>, Vec<f32>)> = (0..n_queries)
             .map(|q| {
-                let indices: Vec<usize> = indices_flat[q*k..(q+1)*k]
-                    .iter().map(|&i| if i >= 0 { i as usize } else { 0 }).collect();
-                let distances: Vec<f32> = distances_flat[q*k..(q+1)*k].to_vec();
+                let indices: Vec<usize> = indices_flat[q * k..(q + 1) * k]
+                    .iter()
+                    .map(|&i| if i >= 0 { i as usize } else { 0 })
+                    .collect();
+                let distances: Vec<f32> = distances_flat[q * k..(q + 1) * k].to_vec();
                 (indices, distances)
             })
             .collect();
@@ -385,14 +438,24 @@ impl GpuIndex {
 // ============================================================================
 
 /// GPU L2 distance computation with persistent dataset.
-pub fn gpu_l2_distances(query: &[f32], dataset: &[f32], n_rows: usize, dim: usize) -> Option<Vec<f32>> {
+pub fn gpu_l2_distances(
+    query: &[f32],
+    dataset: &[f32],
+    n_rows: usize,
+    dim: usize,
+) -> Option<Vec<f32>> {
     let mut idx = GpuIndex::new()?;
     idx.upload_dataset(dataset, n_rows, dim);
     idx.l2_distances(query)
 }
 
 /// GPU cosine distance computation.
-pub fn gpu_cosine_distances(query: &[f32], dataset: &[f32], n_rows: usize, dim: usize) -> Option<Vec<f32>> {
+pub fn gpu_cosine_distances(
+    query: &[f32],
+    dataset: &[f32],
+    n_rows: usize,
+    dim: usize,
+) -> Option<Vec<f32>> {
     let mut idx = GpuIndex::new()?;
     idx.upload_dataset(dataset, n_rows, dim);
     idx.cosine_distances(query)

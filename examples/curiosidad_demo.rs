@@ -61,6 +61,9 @@ fn main() {
     for q in a.questions_iter() {
         println!("  [{:?}] {} -> {:?}", q.priority, q.text, q.status);
     }
-    let abiertas = a.questions_iter().filter(|q| q.status == QStatus::Open).count();
+    let abiertas = a
+        .questions_iter()
+        .filter(|q| q.status == QStatus::Open)
+        .count();
     println!("abiertas: {abiertas}");
 }

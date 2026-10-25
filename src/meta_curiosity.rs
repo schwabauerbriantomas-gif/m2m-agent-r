@@ -118,7 +118,12 @@ pub fn ask(agent: &mut AgentR, point: CriticalPoint) -> u64 {
 }
 
 /// Igual que `ask` pero con texto custom (cuando el templado no alcanza).
-pub fn ask_custom(agent: &mut AgentR, point: CriticalPoint, text: String, priority: Priority) -> u64 {
+pub fn ask_custom(
+    agent: &mut AgentR,
+    point: CriticalPoint,
+    text: String,
+    priority: Priority,
+) -> u64 {
     agent.add_question(point, text, priority)
 }
 
@@ -128,7 +133,10 @@ pub fn ask_custom(agent: &mut AgentR, point: CriticalPoint, text: String, priori
 /// bloquea el flujo por indisponibilidad del LLM.
 #[cfg(feature = "critic")]
 pub fn elaborate(agent: &AgentR, question_id: u64) -> Option<String> {
-    let q = agent.questions_iter().find(|q| q.id == question_id)?.clone();
+    let q = agent
+        .questions_iter()
+        .find(|q| q.id == question_id)?
+        .clone();
     let critic = super::meta::Critic::from_env().ok()?;
     let sys = "Sos un asesor de investigación. Respondé SOLO JSON: {\"sharper\":\"pregunta refinada\",\"method\":\"cómo investigarla en 1-3 pasos concretos\"}.";
     let user = format!(
@@ -138,7 +146,11 @@ pub fn elaborate(agent: &AgentR, question_id: u64) -> Option<String> {
     );
     let raw = critic.ask(sys, &user).ok()?;
     let v: Value = serde_json::from_str(
-        raw.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim(),
+        raw.trim()
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim(),
     )
     .ok()?;
     Some(format!(
@@ -154,20 +166,43 @@ pub fn elaborate(_agent: &AgentR, _question_id: u64) -> Option<String> {
 }
 
 /// Helpers de observación para los triggers más comunes (azúcar sobre `ask`).
-pub fn observe_metric_delta(agent: &mut AgentR, metric: &str, from: f64, to: f64, min_delta: f64) -> Option<u64> {
+pub fn observe_metric_delta(
+    agent: &mut AgentR,
+    metric: &str,
+    from: f64,
+    to: f64,
+    min_delta: f64,
+) -> Option<u64> {
     if (to - from).abs() >= min_delta {
-        Some(ask(agent, CriticalPoint::MetricDelta { metric: metric.into(), from, to }))
+        Some(ask(
+            agent,
+            CriticalPoint::MetricDelta {
+                metric: metric.into(),
+                from,
+                to,
+            },
+        ))
     } else {
         None
     }
 }
 
 pub fn observe_claim_without_validation(agent: &mut AgentR, claim: &str) -> u64 {
-    ask(agent, CriticalPoint::ClaimWithoutValidation { claim: claim.into() })
+    ask(
+        agent,
+        CriticalPoint::ClaimWithoutValidation {
+            claim: claim.into(),
+        },
+    )
 }
 
 pub fn observe_security_finding(agent: &mut AgentR, finding: &str) -> u64 {
-    ask(agent, CriticalPoint::SecurityFinding { finding: finding.into() })
+    ask(
+        agent,
+        CriticalPoint::SecurityFinding {
+            finding: finding.into(),
+        },
+    )
 }
 
 #[cfg(test)]
@@ -178,18 +213,28 @@ mod tests {
     #[test]
     fn test_ask_genera_pregunta_abierta_dedup() {
         let mut a = AgentR::new_ephemeral();
-        let id1 = ask(&mut a, CriticalPoint::MetricDelta {
-            metric: "recall".into(), from: 100.0, to: 88.9,
-        });
+        let id1 = ask(
+            &mut a,
+            CriticalPoint::MetricDelta {
+                metric: "recall".into(),
+                from: 100.0,
+                to: 88.9,
+            },
+        );
         assert_eq!(a.questions_iter().count(), 1);
         let q = a.questions_iter().find(|q| q.id == id1).unwrap();
         assert_eq!(q.status, QStatus::Open);
         assert_eq!(q.priority, Priority::High);
         assert!(q.text.contains("recall"));
         // mismo punto => misma pregunta (dedup por texto)
-        let id2 = ask(&mut a, CriticalPoint::MetricDelta {
-            metric: "recall".into(), from: 100.0, to: 88.9,
-        });
+        let id2 = ask(
+            &mut a,
+            CriticalPoint::MetricDelta {
+                metric: "recall".into(),
+                from: 100.0,
+                to: 88.9,
+            },
+        );
         assert_eq!(id1, id2, "pregunta duplicada = NOOP");
         assert_eq!(a.questions_iter().count(), 1);
     }
@@ -197,9 +242,12 @@ mod tests {
     #[test]
     fn test_answer_cierra_con_leccion() {
         let mut a = AgentR::new_ephemeral();
-        let id = ask(&mut a, CriticalPoint::ClaimWithoutValidation {
-            claim: "el label post-hoc mejora la precisión".into(),
-        });
+        let id = ask(
+            &mut a,
+            CriticalPoint::ClaimWithoutValidation {
+                claim: "el label post-hoc mejora la precisión".into(),
+            },
+        );
         let lesson = a.record_error(
             crate::agent_r::ErrorCategory::SkippedValidation,
             crate::agent_r::ErrorSeverity::Warning,
@@ -209,7 +257,12 @@ mod tests {
             &["rsi", "curiosidad"],
             "observe_claim_without_validation en cada afirmación de mejora",
         );
-        assert!(a.answer_question(id, "A/B: 40%->100% precisión, +1 top1 holdout", lesson, None));
+        assert!(a.answer_question(
+            id,
+            "A/B: 40%->100% precisión, +1 top1 holdout",
+            lesson,
+            None
+        ));
         let q = a.questions_iter().find(|q| q.id == id).unwrap();
         assert_eq!(q.status, QStatus::Answered);
         assert_eq!(q.lesson_id, Some(lesson));
@@ -233,9 +286,12 @@ mod tests {
         let path = dir.join("state.json");
         {
             let mut a = AgentR::with_state_path(path.clone());
-            ask(&mut a, CriticalPoint::SecurityFinding {
-                finding: "receipt re-usable infla W".into(),
-            });
+            ask(
+                &mut a,
+                CriticalPoint::SecurityFinding {
+                    finding: "receipt re-usable infla W".into(),
+                },
+            );
             a.flush().unwrap();
         }
         let b = AgentR::with_state_path(path);

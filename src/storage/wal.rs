@@ -129,10 +129,16 @@ impl WriteAheadLog {
         // Swap with a dummy file (truncate the real file and rewrite below)
         let dummy_path = self.path.with_extension("tmp");
         let dummy_file = File::create(&dummy_path)?;
-        drop(std::mem::replace(&mut inner.file, BufWriter::new(dummy_file)));
+        drop(std::mem::replace(
+            &mut inner.file,
+            BufWriter::new(dummy_file),
+        ));
 
         // Rewrite with remaining entries
-        let file = OpenOptions::new().write(true).truncate(true).open(&self.path)?;
+        let file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&self.path)?;
         let mut writer = BufWriter::new(file);
         for entry in remaining {
             let serialized = serde_json::to_vec(entry)?;

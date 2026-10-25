@@ -17,8 +17,11 @@ use std::fs;
 
 fn map_category(ftype: &str) -> ErrorCategory {
     let t = ftype.to_lowercase();
-    if t.contains("strategy") || t.contains("lateral") || t.contains("goal")
-        || t.contains("planning") || t.contains("spatial")
+    if t.contains("strategy")
+        || t.contains("lateral")
+        || t.contains("goal")
+        || t.contains("planning")
+        || t.contains("spatial")
     {
         ErrorCategory::BadAssumption
     } else if t.contains("loop") || t.contains("repeat") {
@@ -104,8 +107,14 @@ fn main() {
             .unwrap_or_default();
         let ts = &task["test_snapshot"];
         let test_id = ts["episode_id"].as_str().unwrap_or("").to_string();
-        let game = game_of_ep.get(&test_id).cloned().unwrap_or_else(|| "level-1".into());
-        let model = model_of_ep.get(&test_id).cloned().unwrap_or_else(|| "unknown".into());
+        let game = game_of_ep
+            .get(&test_id)
+            .cloned()
+            .unwrap_or_else(|| "level-1".into());
+        let model = model_of_ep
+            .get(&test_id)
+            .cloned()
+            .unwrap_or_else(|| "unknown".into());
 
         let all = agent.preflight_v2_scored_all(&game, &[&model, "babyai", "level-1"]);
         // Híbrido: mismo re-ranking que producción (situación = trayectoria
@@ -117,12 +126,20 @@ fn main() {
             if let Some(ep) = ep {
                 let traj = ep["snapshot"].get("trajectory").and_then(|t| t.as_array());
                 if let Some(steps) = traj {
-                    let upto = if dp > 0 { (dp as usize).min(steps.len()) } else { steps.len() };
+                    let upto = if dp > 0 {
+                        (dp as usize).min(steps.len())
+                    } else {
+                        steps.len()
+                    };
                     for st in &steps[..upto] {
                         s.push_str(st.get("obs").and_then(|o| o.as_str()).unwrap_or(""));
                         s.push(' ');
-                        s.push_str(&st.get("act").or_else(|| st.get("action"))
-                            .map(|a| a.to_string()).unwrap_or_default());
+                        s.push_str(
+                            &st.get("act")
+                                .or_else(|| st.get("action"))
+                                .map(|a| a.to_string())
+                                .unwrap_or_default(),
+                        );
                         s.push(' ');
                     }
                 }
@@ -159,5 +176,10 @@ fn main() {
     let out = serde_json::json!({ "n_rules": ep_of_rule.len(), "tasks": out_tasks });
     let path = format!("{}/structural_scores_l1.json", data_dir);
     fs::write(&path, serde_json::to_string(&out).unwrap()).unwrap();
-    println!("OK -> {} ({} reglas, {} tareas)", path, ep_of_rule.len(), out_tasks.len());
+    println!(
+        "OK -> {} ({} reglas, {} tareas)",
+        path,
+        ep_of_rule.len(),
+        out_tasks.len()
+    );
 }

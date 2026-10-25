@@ -201,7 +201,9 @@ impl GpuAutoTuner {
 }
 
 impl Default for GpuAutoTuner {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

@@ -155,7 +155,12 @@ impl Critic {
     /// Prompt de crítica: output del executor + contexto => JSON con
     /// {verdict: "ok"|"issues", issues: [...], refined: "..."}.
     /// El prompt EXIGE formato JSON para parseo programático (nada de prosa).
-    pub fn critique_output(&self, operation: &str, output: &str, context: &str) -> Result<Value, String> {
+    pub fn critique_output(
+        &self,
+        operation: &str,
+        output: &str,
+        context: &str,
+    ) -> Result<Value, String> {
         let system = CRITIC_SYSTEM;
         let user = format!(
             "Operación: {operation}\n\nContexto:\n{context}\n\nOutput a criticar:\n{output}\n\nRespondé solo el JSON."
@@ -190,7 +195,10 @@ pub fn self_debug(
     let mut last: Option<RefineOutcome> = None;
     for i in 0..budget {
         let out = refine(agent, store, operation, &current, context);
-        let overall = out.validation["overall"].as_str().unwrap_or("unverifiable").to_string();
+        let overall = out.validation["overall"]
+            .as_str()
+            .unwrap_or("unverifiable")
+            .to_string();
         let decision = out.decision;
         let receipt_result_none = out.receipt_result.is_none();
         let critic_raw = out.critic_raw.clone();
@@ -208,7 +216,10 @@ pub fn self_debug(
             #[cfg(feature = "critic")]
             if let Some(raw) = critic_raw.clone() {
                 if let Ok(v) = serde_json::from_str::<Value>(&raw) {
-                    if let Some(r) = v["refined"].as_str().and_then(|s| serde_json::from_str::<Value>(s).ok()) {
+                    if let Some(r) = v["refined"]
+                        .as_str()
+                        .and_then(|s| serde_json::from_str::<Value>(s).ok())
+                    {
                         current = r;
                         continue;
                     }
@@ -290,7 +301,8 @@ pub fn refine(
         "receipt_id": receipt_claim,
         "refined_by": CRITIC_MODEL,
     });
-    let validation = agent.validate_output_v2_full(operation, &candidate, Some(&evidence), Some(store));
+    let validation =
+        agent.validate_output_v2_full(operation, &candidate, Some(&evidence), Some(store));
     let overall = validation.overall.clone();
 
     // 4. Decisión conservadora: solo un candidato "pass" (N0/N1+N2/N3)
@@ -342,9 +354,17 @@ mod self_debug_tests {
 
     #[test]
     fn test_self_debug_sin_critic_devuelve_validacion_una_pasada() {
-        let store = ReceiptStore::open_no_env(std::path::Path::new("/tmp/self_debug_test")).unwrap();
+        let store =
+            ReceiptStore::open_no_env(std::path::Path::new("/tmp/self_debug_test")).unwrap();
         let mut a = AgentR::new_ephemeral();
-        let out = self_debug(&mut a, &store, "op_x", &serde_json::json!({"k": 1}), "ctx", 4);
+        let out = self_debug(
+            &mut a,
+            &store,
+            "op_x",
+            &serde_json::json!({"k": 1}),
+            "ctx",
+            4,
+        );
         // sin crítico: kept_original + validación programática igual emitida
         assert_eq!(out.decision, "kept_original");
         assert!(out.validation["overall"].as_str().is_some());
@@ -357,10 +377,12 @@ mod tests {
 
     #[test]
     fn test_model_fijo_glm53flash() {
-        let c = Critic::from_env().or_else(|_| {
-            std::env::set_var("Z_AI_API_KEY", "test-key");
-            Critic::from_env()
-        }).expect("critic");
+        let c = Critic::from_env()
+            .or_else(|_| {
+                std::env::set_var("Z_AI_API_KEY", "test-key");
+                Critic::from_env()
+            })
+            .expect("critic");
         assert_eq!(c.model(), "glm-5.3-flash");
     }
 }

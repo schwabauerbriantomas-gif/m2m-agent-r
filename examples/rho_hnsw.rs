@@ -54,12 +54,9 @@ fn synth_corpus(n: usize) -> F32x {
         let c = rng.gen_range(0..m);
         for j in 0..D {
             // Irwin-Hall(4) centrado, std ~0.35 tras escalar (aprox del gaussiano Python)
-            let g: f32 = (rng.gen::<f32>()
-                + rng.gen::<f32>()
-                + rng.gen::<f32>()
-                + rng.gen::<f32>()
-                - 2.0)
-                * 0.605;
+            let g: f32 =
+                (rng.gen::<f32>() + rng.gen::<f32>() + rng.gen::<f32>() + rng.gen::<f32>() - 2.0)
+                    * 0.605;
             data[i * D + j] = means[c * D + j] + g;
         }
         normalize(&mut data[i * D..(i + 1) * D]);
@@ -98,7 +95,10 @@ fn main() {
     // ---------- corpus real: prefijos anidados 2000 ⊂ 4000 ⊂ full ----------
     if let (Some(path), Some(n)) = (&npy_path, npy_n) {
         let bytes = std::fs::read(path).expect("leer npy");
-        assert!(bytes.len() > 128 && &bytes[0..6] == b"\x93NUMPY", "no es npy");
+        assert!(
+            bytes.len() > 128 && &bytes[0..6] == b"\x93NUMPY",
+            "no es npy"
+        );
         let hlen = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
         let off = 10 + hlen;
         let n_av = (bytes.len() - off) / (D * 4);

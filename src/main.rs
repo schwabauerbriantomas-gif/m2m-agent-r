@@ -1,16 +1,20 @@
 //! M2M Vector Search CLI — AI-friendly interface.
 
 use clap::{Parser, Subcommand};
-use ndarray::{Array1, Array2};
 use m2m_vector_search::{
-    M2MConfig, SplatStore,
+    quantization::{QuantAlgorithm, QuantConfig, QuantizedStore},
     storage::persistence::{M2MPersistence, StorageBackend},
-    quantization::{QuantConfig, QuantAlgorithm, QuantizedStore},
+    M2MConfig, SplatStore,
 };
+use ndarray::{Array1, Array2};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "m2m", version, about = "M2M Vector Search — Gaussian Splat semantic memory")]
+#[command(
+    name = "m2m",
+    version,
+    about = "M2M Vector Search — Gaussian Splat semantic memory"
+)]
 struct Cli {
     /// Storage directory (default: ./m2m_data)
     #[arg(long, global = true, default_value = "./m2m_data")]
@@ -358,11 +362,18 @@ fn resolve_backend(name: &str) -> StorageBackend {
     }
 }
 
-fn make_persistence(data_dir: &str, backend: &str, rw: bool) -> Result<M2MPersistence, Box<dyn std::error::Error + Send + Sync>> {
+fn make_persistence(
+    data_dir: &str,
+    backend: &str,
+    rw: bool,
+) -> Result<M2MPersistence, Box<dyn std::error::Error + Send + Sync>> {
     M2MPersistence::with_backend(data_dir, resolve_backend(backend), rw)
 }
 
-fn load_or_create_store(data_dir: &str, config: &M2MConfig) -> (SplatStore, Option<M2MPersistence>) {
+fn load_or_create_store(
+    data_dir: &str,
+    config: &M2MConfig,
+) -> (SplatStore, Option<M2MPersistence>) {
     let persist = make_persistence(data_dir, "sqlite", true).ok();
     let mut store = SplatStore::new(config.clone());
 
@@ -371,7 +382,10 @@ fn load_or_create_store(data_dir: &str, config: &M2MConfig) -> (SplatStore, Opti
         if let Ok(Some(vectors)) = p.load_vectors("default") {
             store.add_splat(&vectors);
             store.build_index();
-            eprintln!("[m2m] Loaded {} vectors from default shard", vectors.nrows());
+            eprintln!(
+                "[m2m] Loaded {} vectors from default shard",
+                vectors.nrows()
+            );
         }
     }
 
@@ -388,19 +402,31 @@ fn parse_query(s: &str) -> Result<Array1<f32>, String> {
 
 fn resolve_query(query: Option<&str>, query_file: Option<&PathBuf>) -> Array1<f32> {
     match (query, query_file) {
-        (Some(q), _) => parse_query(q).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); }),
-        (_, Some(f)) => load_query_bin(f).unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); }),
-        (None, None) => { eprintln!("Error: provide --query or --query-file"); std::process::exit(1); }
+        (Some(q), _) => parse_query(q).unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }),
+        (_, Some(f)) => load_query_bin(f).unwrap_or_else(|e| {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }),
+        (None, None) => {
+            eprintln!("Error: provide --query or --query-file");
+            std::process::exit(1);
+        }
     }
 }
 
 fn load_query_bin(path: &PathBuf) -> Result<Array1<f32>, String> {
     use std::io::Read;
-    let mut file = std::fs::File::open(path).map_err(|e| format!("Cannot open {}: {}", path.display(), e))?;
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("Cannot open {}: {}", path.display(), e))?;
     let mut buf8 = [0u8; 8];
-    file.read_exact(&mut buf8).map_err(|e| format!("Read error: {}", e))?;
+    file.read_exact(&mut buf8)
+        .map_err(|e| format!("Read error: {}", e))?;
     let rows = u64::from_le_bytes(buf8) as usize;
-    file.read_exact(&mut buf8).map_err(|e| format!("Read error: {}", e))?;
+    file.read_exact(&mut buf8)
+        .map_err(|e| format!("Read error: {}", e))?;
     let cols = u64::from_le_bytes(buf8) as usize;
 
     if rows != 1 {
@@ -408,54 +434,63 @@ fn load_query_bin(path: &PathBuf) -> Result<Array1<f32>, String> {
     }
 
     let mut data = vec![0.0f32; cols];
-    let bytes: &mut [u8] = unsafe {
-        std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, cols * 4)
-    };
-    file.read_exact(bytes).map_err(|e| format!("Read error: {}", e))?;
+    let bytes: &mut [u8] =
+        unsafe { std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, cols * 4) };
+    file.read_exact(bytes)
+        .map_err(|e| format!("Read error: {}", e))?;
     Ok(Array1::from(data))
 }
 
 fn load_vectors_bin(path: &PathBuf) -> Result<Array2<f32>, String> {
     use std::io::Read;
-    let mut file = std::fs::File::open(path).map_err(|e| format!("Cannot open {}: {}", path.display(), e))?;
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("Cannot open {}: {}", path.display(), e))?;
     let mut buf8 = [0u8; 8];
-    file.read_exact(&mut buf8).map_err(|e| format!("Read error: {}", e))?;
+    file.read_exact(&mut buf8)
+        .map_err(|e| format!("Read error: {}", e))?;
     let rows = u64::from_le_bytes(buf8) as usize;
-    file.read_exact(&mut buf8).map_err(|e| format!("Read error: {}", e))?;
+    file.read_exact(&mut buf8)
+        .map_err(|e| format!("Read error: {}", e))?;
     let cols = u64::from_le_bytes(buf8) as usize;
 
     let mut data = vec![0.0f32; rows * cols];
-    let bytes: &mut [u8] = unsafe {
-        std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, data.len() * 4)
-    };
-    file.read_exact(bytes).map_err(|e| format!("Read error: {}", e))?;
+    let bytes: &mut [u8] =
+        unsafe { std::slice::from_raw_parts_mut(data.as_mut_ptr() as *mut u8, data.len() * 4) };
+    file.read_exact(bytes)
+        .map_err(|e| format!("Read error: {}", e))?;
     Array2::from_shape_vec((rows, cols), data).map_err(|e| format!("Shape error: {}", e))
 }
 
 fn format_neighbors(results: &[m2m_vector_search::splats::NeighborResult], format: &str) -> String {
     match format {
         "json" => {
-            let entries: Vec<serde_json::Value> = results.iter().map(|r| {
-                serde_json::json!({
-                    "index": r.index,
-                    "distance": (r.distance * 10000.0).round() / 10000.0,
-                    "alpha": (r.alpha * 10000.0).round() / 10000.0,
-                    "kappa": (r.kappa * 10000.0).round() / 10000.0,
+            let entries: Vec<serde_json::Value> = results
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "index": r.index,
+                        "distance": (r.distance * 10000.0).round() / 10000.0,
+                        "alpha": (r.alpha * 10000.0).round() / 10000.0,
+                        "kappa": (r.kappa * 10000.0).round() / 10000.0,
+                    })
                 })
-            }).collect();
+                .collect();
             serde_json::to_string_pretty(&entries).unwrap_or_else(|_| "[]".into())
         }
-        "compact" => {
-            results.iter()
-                .map(|r| format!("{}:{:.4}", r.index, r.distance))
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
-        _ => { // table
+        "compact" => results
+            .iter()
+            .map(|r| format!("{}:{:.4}", r.index, r.distance))
+            .collect::<Vec<_>>()
+            .join(" "),
+        _ => {
+            // table
             let mut out = String::from("Index\tDistance\tAlpha\t\tKappa\n");
             out.push_str(&"—\t—\t—\t—\n".repeat(1));
             for r in results {
-                out.push_str(&format!("{}\t{:.4}\t\t{:.4}\t\t{:.4}\n", r.index, r.distance, r.alpha, r.kappa));
+                out.push_str(&format!(
+                    "{}\t{:.4}\t\t{:.4}\t\t{:.4}\n",
+                    r.index, r.distance, r.alpha, r.kappa
+                ));
             }
             out
         }
@@ -470,35 +505,53 @@ fn main() {
         Commands::Index { input, shard } => {
             let vectors = match load_vectors_bin(&input) {
                 Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             };
-            eprintln!("[m2m] Loaded {} vectors ({}D) from {}", vectors.nrows(), vectors.ncols(), input.display());
+            eprintln!(
+                "[m2m] Loaded {} vectors ({}D) from {}",
+                vectors.nrows(),
+                vectors.ncols(),
+                input.display()
+            );
 
-            let persist = make_persistence(&cli.data_dir, &cli.backend, true)
-                .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
+            let persist = make_persistence(&cli.data_dir, &cli.backend, true).unwrap_or_else(|e| {
+                eprintln!("Storage error: {}", e);
+                std::process::exit(1);
+            });
 
-            persist.save_vectors(&vectors, &shard)
-                .unwrap_or_else(|e| { eprintln!("Save error: {}", e); std::process::exit(1); });
+            persist.save_vectors(&vectors, &shard).unwrap_or_else(|e| {
+                eprintln!("Save error: {}", e);
+                std::process::exit(1);
+            });
 
             // Also index in memory
             let mut store = SplatStore::new(config);
             store.add_splat(&vectors);
             store.build_index();
 
-            println!("{}", serde_json::json!({
-                "status": "indexed",
-                "shard": shard,
-                "n_vectors": vectors.nrows(),
-                "dim": vectors.ncols(),
-                "n_active": store.n_active(),
-                "entropy": (store.entropy() * 10000.0).round() / 10000.0,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "indexed",
+                    "shard": shard,
+                    "n_vectors": vectors.nrows(),
+                    "dim": vectors.ncols(),
+                    "n_active": store.n_active(),
+                    "entropy": (store.entropy() * 10000.0).round() / 10000.0,
+                })
+            );
         }
 
         Commands::Search { query, k, format } => {
             let q = match parse_query(&query) {
                 Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             };
             let (store, _) = load_or_create_store(&cli.data_dir, &config);
             let results = store.find_neighbors(&q.view(), k);
@@ -508,7 +561,10 @@ fn main() {
         Commands::SearchFile { input, k, format } => {
             let q = match load_query_bin(&input) {
                 Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             };
             let (store, _) = load_or_create_store(&cli.data_dir, &config);
             let results = store.find_neighbors(&q.view(), k);
@@ -531,7 +587,8 @@ fn main() {
                     out["shards"] = serde_json::json!(p.list_shards());
                 }
                 let strategy = m2m_vector_search::interfaces::select_index_strategy(
-                    stats.n_active, stats.embedding_dim
+                    stats.n_active,
+                    stats.embedding_dim,
                 );
                 out["index_strategy"] = serde_json::json!({
                     "recommended": strategy.recommended,
@@ -558,14 +615,17 @@ fn main() {
             soc.update_splats(mu.unwrap(), alpha.unwrap(), kappa.unwrap());
 
             let report = soc.check_criticality();
-            println!("{}", serde_json::json!({
-                "state": format!("{:?}", report.state),
-                "index": (report.index * 10000.0).round() / 10000.0,
-                "energy_variance": (report.energy_variance * 10000.0).round() / 10000.0,
-                "size_variance": (report.size_variance * 10000.0).round() / 10000.0,
-                "needs_relaxation": report.needs_relaxation(),
-                "needs_monitoring": report.needs_monitoring(),
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "state": format!("{:?}", report.state),
+                    "index": (report.index * 10000.0).round() / 10000.0,
+                    "energy_variance": (report.energy_variance * 10000.0).round() / 10000.0,
+                    "size_variance": (report.size_variance * 10000.0).round() / 10000.0,
+                    "needs_relaxation": report.needs_relaxation(),
+                    "needs_monitoring": report.needs_monitoring(),
+                })
+            );
         }
 
         Commands::SocAvalanche { seed } => {
@@ -584,12 +644,15 @@ fn main() {
             soc.update_splats(mu.unwrap(), alpha.unwrap(), kappa.unwrap());
 
             let result = soc.trigger_avalanche(seed);
-            println!("{}", serde_json::json!({
-                "affected_clusters": result.affected_clusters,
-                "energy_released": (result.energy_released * 10000.0).round() / 10000.0,
-                "duration_ms": (result.duration_ms * 1000.0).round() / 1000.0,
-                "new_equilibrium": (result.new_equilibrium * 10000.0).round() / 10000.0,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "affected_clusters": result.affected_clusters,
+                    "energy_released": (result.energy_released * 10000.0).round() / 10000.0,
+                    "duration_ms": (result.duration_ms * 1000.0).round() / 1000.0,
+                    "new_equilibrium": (result.new_equilibrium * 10000.0).round() / 10000.0,
+                })
+            );
         }
 
         Commands::SocRelax { iterations } => {
@@ -608,20 +671,26 @@ fn main() {
             soc.update_splats(mu.unwrap(), alpha.unwrap(), kappa.unwrap());
 
             let result = soc.relax(iterations);
-            println!("{}", serde_json::json!({
-                "initial_energy": (result.initial_energy * 10000.0).round() / 10000.0,
-                "final_energy": (result.final_energy * 10000.0).round() / 10000.0,
-                "energy_delta": (result.energy_delta * 10000.0).round() / 10000.0,
-                "iterations": result.iterations,
-                "improved": result.improved,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "initial_energy": (result.initial_energy * 10000.0).round() / 10000.0,
+                    "final_energy": (result.final_energy * 10000.0).round() / 10000.0,
+                    "energy_delta": (result.energy_delta * 10000.0).round() / 10000.0,
+                    "iterations": result.iterations,
+                    "improved": result.improved,
+                })
+            );
         }
 
         Commands::Save { shard } => {
             let (store, persist) = load_or_create_store(&cli.data_dir, &config);
             let persist = match persist {
                 Some(p) => p,
-                None => { eprintln!("Error: no persistence layer"); std::process::exit(1); }
+                None => {
+                    eprintln!("Error: no persistence layer");
+                    std::process::exit(1);
+                }
             };
 
             let mu = store.get_mu();
@@ -631,15 +700,24 @@ fn main() {
             if let (Some(mu), Some(alpha), Some(kappa)) = (mu, alpha, kappa) {
                 let n = store.n_active();
                 let vectors = mu.slice(ndarray::s![..n, ..]).to_owned();
-                persist.save_vectors(&vectors, &shard)
-                    .unwrap_or_else(|e| { eprintln!("Save error: {}", e); std::process::exit(1); });
-                persist.save_energy_state(&vectors, &alpha.to_vec(), &kappa.to_vec())
-                    .unwrap_or_else(|e| { eprintln!("Energy save error: {}", e); std::process::exit(1); });
-                println!("{}", serde_json::json!({
-                    "status": "saved",
-                    "shard": shard,
-                    "n_vectors": n,
-                }));
+                persist.save_vectors(&vectors, &shard).unwrap_or_else(|e| {
+                    eprintln!("Save error: {}", e);
+                    std::process::exit(1);
+                });
+                persist
+                    .save_energy_state(&vectors, &alpha.to_vec(), &kappa.to_vec())
+                    .unwrap_or_else(|e| {
+                        eprintln!("Energy save error: {}", e);
+                        std::process::exit(1);
+                    });
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "saved",
+                        "shard": shard,
+                        "n_vectors": n,
+                    })
+                );
             } else {
                 eprintln!("No data to save");
                 std::process::exit(1);
@@ -647,20 +725,28 @@ fn main() {
         }
 
         Commands::Load { shard } => {
-            let persist = make_persistence(&cli.data_dir, &cli.backend, true)
-                .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
+            let persist = make_persistence(&cli.data_dir, &cli.backend, true).unwrap_or_else(|e| {
+                eprintln!("Storage error: {}", e);
+                std::process::exit(1);
+            });
 
             match persist.load_vectors(&shard) {
                 Ok(Some(vectors)) => {
-                    println!("{}", serde_json::json!({
-                        "status": "loaded",
-                        "shard": shard,
-                        "n_vectors": vectors.nrows(),
-                        "dim": vectors.ncols(),
-                    }));
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "status": "loaded",
+                            "shard": shard,
+                            "n_vectors": vectors.nrows(),
+                            "dim": vectors.ncols(),
+                        })
+                    );
                 }
                 Ok(None) => {
-                    println!("{}", serde_json::json!({"status": "not_found", "shard": shard}));
+                    println!(
+                        "{}",
+                        serde_json::json!({"status": "not_found", "shard": shard})
+                    );
                 }
                 Err(e) => {
                     eprintln!("Load error: {}", e);
@@ -670,58 +756,101 @@ fn main() {
         }
 
         Commands::List => {
-            let persist = make_persistence(&cli.data_dir, &cli.backend, false)
-                .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
+            let persist =
+                make_persistence(&cli.data_dir, &cli.backend, false).unwrap_or_else(|e| {
+                    eprintln!("Storage error: {}", e);
+                    std::process::exit(1);
+                });
             let shards = persist.list_shards();
             println!("{}", serde_json::json!({"shards": shards}));
         }
 
         Commands::DocAdd { id, text, metadata } => {
-            let persist = make_persistence(&cli.data_dir, &cli.backend, true)
-                .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
-            let meta_json = metadata.as_deref()
+            let persist = make_persistence(&cli.data_dir, &cli.backend, true).unwrap_or_else(|e| {
+                eprintln!("Storage error: {}", e);
+                std::process::exit(1);
+            });
+            let meta_json = metadata
+                .as_deref()
                 .and_then(|s| serde_json::from_str(s).ok());
-            persist.save_metadata(&id, 0, 0, meta_json.as_ref(), Some(&text))
-                .unwrap_or_else(|e| { eprintln!("Error: {}", e); std::process::exit(1); });
+            persist
+                .save_metadata(&id, 0, 0, meta_json.as_ref(), Some(&text))
+                .unwrap_or_else(|e| {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                });
             println!("{}", serde_json::json!({"status": "ok", "id": id}));
         }
 
         Commands::DocGet { id } => {
-            let persist = make_persistence(&cli.data_dir, &cli.backend, false)
-                .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
+            let persist =
+                make_persistence(&cli.data_dir, &cli.backend, false).unwrap_or_else(|e| {
+                    eprintln!("Storage error: {}", e);
+                    std::process::exit(1);
+                });
             match persist.get_metadata(&id) {
                 Ok(Some(meta)) => println!("{}", serde_json::to_string_pretty(&meta).unwrap()),
                 Ok(None) => println!("{}", serde_json::json!({"status": "not_found", "id": id})),
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
 
         Commands::DocDel { id } => {
-            let persist = make_persistence(&cli.data_dir, &cli.backend, true)
-                .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
+            let persist = make_persistence(&cli.data_dir, &cli.backend, true).unwrap_or_else(|e| {
+                eprintln!("Storage error: {}", e);
+                std::process::exit(1);
+            });
             match persist.soft_delete(&id) {
                 Ok(true) => println!("{}", serde_json::json!({"status": "deleted", "id": id})),
                 Ok(false) => println!("{}", serde_json::json!({"status": "not_found", "id": id})),
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
 
         Commands::Backup { output } => {
-            let persist = make_persistence(&cli.data_dir, &cli.backend, false)
-                .unwrap_or_else(|e| { eprintln!("Storage error: {}", e); std::process::exit(1); });
+            let persist =
+                make_persistence(&cli.data_dir, &cli.backend, false).unwrap_or_else(|e| {
+                    eprintln!("Storage error: {}", e);
+                    std::process::exit(1);
+                });
             match persist.backup(output.to_str().unwrap_or("./backup")) {
-                Ok(path) => println!("{}", serde_json::json!({"status": "backup_ok", "path": path})),
-                Err(e) => { eprintln!("Backup error: {}", e); std::process::exit(1); }
+                Ok(path) => println!(
+                    "{}",
+                    serde_json::json!({"status": "backup_ok", "path": path})
+                ),
+                Err(e) => {
+                    eprintln!("Backup error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
 
-        Commands::QuantIndex { input, bits, algorithm, seed } => {
+        Commands::QuantIndex {
+            input,
+            bits,
+            algorithm,
+            seed,
+        } => {
             let vectors = match load_vectors_bin(&input) {
                 Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             };
             let dim = vectors.ncols();
-            eprintln!("[m2m] Quantizing {} vectors ({}D, {}-bit)", vectors.nrows(), dim, bits);
+            eprintln!(
+                "[m2m] Quantizing {} vectors ({}D, {}-bit)",
+                vectors.nrows(),
+                dim,
+                bits
+            );
 
             let algo = match algorithm.as_str() {
                 "polar" => QuantAlgorithm::PolarQuant,
@@ -733,7 +862,12 @@ fn main() {
                 QuantAlgorithm::PolarQuant => 0,
             };
 
-            let qcfg = QuantConfig { bits, projections, seed, algorithm: algo };
+            let qcfg = QuantConfig {
+                bits,
+                projections,
+                seed,
+                algorithm: algo,
+            };
             let mut qstore = QuantizedStore::new(dim, qcfg).unwrap();
             let t0 = std::time::Instant::now();
             let indexed = qstore.add_batch(&vectors, 0);
@@ -743,30 +877,38 @@ fn main() {
             let mem = qstore.memory_usage();
             let raw_mem = dim * 4 * indexed;
 
-            println!("{}", serde_json::json!({
-                "status": "quantized",
-                "algorithm": algorithm,
-                "bits": bits,
-                "n_vectors": indexed,
-                "dim": dim,
-                "compression_ratio": (ratio * 100.0).round() / 100.0,
-                "memory_quantized_bytes": mem,
-                "memory_raw_bytes": raw_mem,
-                "encode_time_ms": elapsed.as_millis() as u64,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "quantized",
+                    "algorithm": algorithm,
+                    "bits": bits,
+                    "n_vectors": indexed,
+                    "dim": dim,
+                    "compression_ratio": (ratio * 100.0).round() / 100.0,
+                    "memory_quantized_bytes": mem,
+                    "memory_raw_bytes": raw_mem,
+                    "encode_time_ms": elapsed.as_millis() as u64,
+                })
+            );
         }
 
         Commands::QuantSearch { query, top_k } => {
             let q_vec = match parse_query(&query) {
                 Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             };
 
             // Load vectors and build quantized store on-the-fly
             let persist = make_persistence(&cli.data_dir, &cli.backend, false).ok();
             let vectors = if let Some(ref p) = persist {
                 p.load_vectors("default").ok().flatten()
-            } else { None };
+            } else {
+                None
+            };
 
             let vectors = match vectors {
                 Some(v) => v,
@@ -785,18 +927,24 @@ fn main() {
             let results = qstore.search(&q_vec.view(), top_k);
             let elapsed = t0.elapsed();
 
-            let entries: Vec<serde_json::Value> = results.iter().map(|(id, score)| {
-                serde_json::json!({
-                    "id": id,
-                    "score": (score * 10000.0).round() / 10000.0,
+            let entries: Vec<serde_json::Value> = results
+                .iter()
+                .map(|(id, score)| {
+                    serde_json::json!({
+                        "id": id,
+                        "score": (score * 10000.0).round() / 10000.0,
+                    })
                 })
-            }).collect();
+                .collect();
 
-            println!("{}", serde_json::json!({
-                "query_time_ms": elapsed.as_millis() as u64,
-                "n_results": entries.len(),
-                "results": entries,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "query_time_ms": elapsed.as_millis() as u64,
+                    "n_results": entries.len(),
+                    "results": entries,
+                })
+            );
         }
 
         Commands::QuantStatus => {
@@ -809,35 +957,38 @@ fn main() {
             let cfg_3bit = QuantConfig::for_max_compression(cli.dim);
             let qs_3bit = QuantizedStore::new(cli.dim, cfg_3bit).unwrap();
 
-            println!("{}", serde_json::json!( {
-                "dim": cli.dim,
-                "presets": {
-                    "search_8bit": {
-                        "algorithm": "TurboQuant",
-                        "bits": 8,
-                        "compression_ratio": (qstore.compression_ratio() * 100.0).round() / 100.0,
-                        "bytes_per_vector": (qstore.compression_ratio().recip() * cli.dim as f32 * 4.0) as usize,
+            println!(
+                "{}",
+                serde_json::json!( {
+                    "dim": cli.dim,
+                    "presets": {
+                        "search_8bit": {
+                            "algorithm": "TurboQuant",
+                            "bits": 8,
+                            "compression_ratio": (qstore.compression_ratio() * 100.0).round() / 100.0,
+                            "bytes_per_vector": (qstore.compression_ratio().recip() * cli.dim as f32 * 4.0) as usize,
+                        },
+                        "balanced_4bit": {
+                            "algorithm": "TurboQuant",
+                            "bits": 4,
+                            "compression_ratio": (qs_4bit.compression_ratio() * 100.0).round() / 100.0,
+                            "bytes_per_vector": (qs_4bit.compression_ratio().recip() * cli.dim as f32 * 4.0) as usize,
+                        },
+                        "max_compression_3bit": {
+                            "algorithm": "PolarQuant",
+                            "bits": 3,
+                            "compression_ratio": (qs_3bit.compression_ratio() * 100.0).round() / 100.0,
+                            "bytes_per_vector": (qs_3bit.compression_ratio().recip() * cli.dim as f32 * 4.0) as usize,
+                        },
                     },
-                    "balanced_4bit": {
-                        "algorithm": "TurboQuant",
-                        "bits": 4,
-                        "compression_ratio": (qs_4bit.compression_ratio() * 100.0).round() / 100.0,
-                        "bytes_per_vector": (qs_4bit.compression_ratio().recip() * cli.dim as f32 * 4.0) as usize,
-                    },
-                    "max_compression_3bit": {
-                        "algorithm": "PolarQuant",
-                        "bits": 3,
-                        "compression_ratio": (qs_3bit.compression_ratio() * 100.0).round() / 100.0,
-                        "bytes_per_vector": (qs_3bit.compression_ratio().recip() * cli.dim as f32 * 4.0) as usize,
-                    },
-                },
-                "features": [
-                    "Data-oblivious: no training or calibration needed",
-                    "Deterministic: same (dim, bits, seed) always produces same codes",
-                    "Instant indexing: no offline training phase",
-                    "Unbiased inner product estimation",
-                ],
-            }));
+                    "features": [
+                        "Data-oblivious: no training or calibration needed",
+                        "Deterministic: same (dim, bits, seed) always produces same codes",
+                        "Instant indexing: no offline training phase",
+                        "Unbiased inner product estimation",
+                    ],
+                })
+            );
         }
 
         Commands::GpuInfo => {
@@ -845,17 +996,26 @@ fn main() {
             let gpu_info = m2m_vector_search::gpu::gpu_info();
             let device = m2m_vector_search::config::detect_device();
 
-            println!("{}", serde_json::json!({
-                "device": device,
-                "cuda_available": cuda_available,
-                "gpu_info": gpu_info,
-                "cuda_feature": {
-                    "compiled": cfg!(feature = "cuda"),
-                },
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "device": device,
+                    "cuda_available": cuda_available,
+                    "gpu_info": gpu_info,
+                    "cuda_feature": {
+                        "compiled": cfg!(feature = "cuda"),
+                    },
+                })
+            );
         }
 
-        Commands::BenchGpu { n_vectors, dim, n_queries, top_k, metric } => {
+        Commands::BenchGpu {
+            n_vectors,
+            dim,
+            n_queries,
+            top_k,
+            metric,
+        } => {
             #[cfg(not(feature = "cuda"))]
             {
                 eprintln!("[m2m] bench-gpu requires --features cuda");
@@ -863,105 +1023,121 @@ fn main() {
             }
             #[cfg(feature = "cuda")]
             {
-            use std::time::Instant;
-            use m2m_vector_search::gpu::cuda_kernel::GpuIndex;
+                use m2m_vector_search::gpu::cuda_kernel::GpuIndex;
+                use std::time::Instant;
 
-            // Generate random dataset
-            eprintln!("[m2m] Generating {} vectors ({}D)...", n_vectors, dim);
-            let mut rng = rand::thread_rng();
-            let dataset: Vec<f32> = (0..n_vectors * dim)
-                .map(|_| rand::Rng::gen_range(&mut rng, -1.0..1.0))
-                .collect();
-            let queries: Vec<f32> = (0..n_queries * dim)
-                .map(|_| rand::Rng::gen_range(&mut rng, -1.0..1.0))
-                .collect();
+                // Generate random dataset
+                eprintln!("[m2m] Generating {} vectors ({}D)...", n_vectors, dim);
+                let mut rng = rand::thread_rng();
+                let dataset: Vec<f32> = (0..n_vectors * dim)
+                    .map(|_| rand::Rng::gen_range(&mut rng, -1.0..1.0))
+                    .collect();
+                let queries: Vec<f32> = (0..n_queries * dim)
+                    .map(|_| rand::Rng::gen_range(&mut rng, -1.0..1.0))
+                    .collect();
 
-            // CPU benchmark
-            eprintln!("[m2m] CPU benchmark...");
-            let t0 = Instant::now();
-            let cpu_results = m2m_vector_search::gpu::batch_search(
-                &queries, n_queries, &dataset, n_vectors, dim, top_k, &metric,
-            );
-            let cpu_ms = t0.elapsed().as_millis() as f64;
+                // CPU benchmark
+                eprintln!("[m2m] CPU benchmark...");
+                let t0 = Instant::now();
+                let cpu_results = m2m_vector_search::gpu::batch_search(
+                    &queries, n_queries, &dataset, n_vectors, dim, top_k, &metric,
+                );
+                let cpu_ms = t0.elapsed().as_millis() as f64;
 
-            // GPU benchmark with persistent dataset
-            let gpu_result = if let Some(mut gpu_idx) = GpuIndex::new() {
-                // Upload phase (measured separately)
-                eprintln!("[m2m] Uploading {} vectors to GPU...", n_vectors);
-                let t_upload = Instant::now();
-                gpu_idx.upload_dataset(&dataset, n_vectors, dim);
-                let upload_ms = t_upload.elapsed().as_millis() as f64;
+                // GPU benchmark with persistent dataset
+                let gpu_result = if let Some(mut gpu_idx) = GpuIndex::new() {
+                    // Upload phase (measured separately)
+                    eprintln!("[m2m] Uploading {} vectors to GPU...", n_vectors);
+                    let t_upload = Instant::now();
+                    gpu_idx.upload_dataset(&dataset, n_vectors, dim);
+                    let upload_ms = t_upload.elapsed().as_millis() as f64;
 
-                // Query phase (dataset already in VRAM)
-                eprintln!("[m2m] GPU query benchmark (dataset in VRAM)...");
-                let t1 = Instant::now();
-                let gpu_results = gpu_idx.topk_search(&queries, n_queries, top_k, &metric);
-                let query_ms = t1.elapsed().as_millis() as f64;
+                    // Query phase (dataset already in VRAM)
+                    eprintln!("[m2m] GPU query benchmark (dataset in VRAM)...");
+                    let t1 = Instant::now();
+                    let gpu_results = gpu_idx.topk_search(&queries, n_queries, top_k, &metric);
+                    let query_ms = t1.elapsed().as_millis() as f64;
 
-                let gpu_results = match gpu_results {
-                    Some(r) => r,
-                    None => {
-                        eprintln!("[m2m] GPU topk_search returned None");
-                        // Fallback to full pipeline
-                        let t2 = Instant::now();
-                        let r = m2m_vector_search::gpu::batch_search(
-                            &queries, n_queries, &dataset, n_vectors, dim, top_k, &metric,
-                        );
-                        let _ = query_ms + t2.elapsed().as_millis() as f64;
-                        r
-                    }
+                    let gpu_results = match gpu_results {
+                        Some(r) => r,
+                        None => {
+                            eprintln!("[m2m] GPU topk_search returned None");
+                            // Fallback to full pipeline
+                            let t2 = Instant::now();
+                            let r = m2m_vector_search::gpu::batch_search(
+                                &queries, n_queries, &dataset, n_vectors, dim, top_k, &metric,
+                            );
+                            let _ = query_ms + t2.elapsed().as_millis() as f64;
+                            r
+                        }
+                    };
+
+                    // Verify GPU matches CPU
+                    let matches = cpu_results.len() == gpu_results.len()
+                        && cpu_results
+                            .iter()
+                            .zip(gpu_results.iter())
+                            .all(|(c, g)| c.0.first() == g.0.first());
+
+                    eprintln!("[m2m] GPU/CPU results match: {}", matches);
+                    Some((upload_ms, query_ms))
+                } else {
+                    None
                 };
 
-                // Verify GPU matches CPU
-                let matches = cpu_results.len() == gpu_results.len()
-                    && cpu_results.iter().zip(gpu_results.iter())
-                        .all(|(c, g)| c.0.first() == g.0.first());
+                let gpu_json = gpu_result.map(|(upload_ms, query_ms)| {
+                    let total_gpu = upload_ms + query_ms;
+                    serde_json::json!({
+                        "upload_ms": upload_ms,
+                        "query_ms": query_ms,
+                        "total_ms": total_gpu,
+                        "per_query_us": query_ms / n_queries as f64 * 1000.0,
+                        "qps_persistent": n_queries as f64 / (query_ms / 1000.0),
+                        "qps_with_upload": n_queries as f64 / (total_gpu / 1000.0),
+                        "speedup_persistent": cpu_ms / query_ms,
+                        "speedup_with_upload": cpu_ms / total_gpu,
+                    })
+                });
 
-                eprintln!("[m2m] GPU/CPU results match: {}", matches);
-                Some((upload_ms, query_ms))
-            } else {
-                None
-            };
-
-            let gpu_json = gpu_result.map(|(upload_ms, query_ms)| {
-                let total_gpu = upload_ms + query_ms;
-                serde_json::json!({
-                    "upload_ms": upload_ms,
-                    "query_ms": query_ms,
-                    "total_ms": total_gpu,
-                    "per_query_us": query_ms / n_queries as f64 * 1000.0,
-                    "qps_persistent": n_queries as f64 / (query_ms / 1000.0),
-                    "qps_with_upload": n_queries as f64 / (total_gpu / 1000.0),
-                    "speedup_persistent": cpu_ms / query_ms,
-                    "speedup_with_upload": cpu_ms / total_gpu,
-                })
-            });
-
-            println!("{}", serde_json::json!({
-                "config": {
-                    "n_vectors": n_vectors,
-                    "dim": dim,
-                    "n_queries": n_queries,
-                    "top_k": top_k,
-                    "metric": metric,
-                    "dataset_mb": (n_vectors * dim * 4) as f64 / 1_048_576.0,
-                },
-                "cpu": {
-                    "total_ms": cpu_ms,
-                    "per_query_us": cpu_ms / n_queries as f64 * 1000.0,
-                    "qps": n_queries as f64 / (cpu_ms / 1000.0),
-                },
-                "gpu": gpu_json,
-            }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "config": {
+                            "n_vectors": n_vectors,
+                            "dim": dim,
+                            "n_queries": n_queries,
+                            "top_k": top_k,
+                            "metric": metric,
+                            "dataset_mb": (n_vectors * dim * 4) as f64 / 1_048_576.0,
+                        },
+                        "cpu": {
+                            "total_ms": cpu_ms,
+                            "per_query_us": cpu_ms / n_queries as f64 * 1000.0,
+                            "qps": n_queries as f64 / (cpu_ms / 1000.0),
+                        },
+                        "gpu": gpu_json,
+                    })
+                );
             } // cfg cuda
         }
 
-        Commands::Ingest { input, n_clusters, seed } => {
+        Commands::Ingest {
+            input,
+            n_clusters,
+            seed,
+        } => {
             let vectors = match load_vectors_bin(&input) {
                 Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             };
-            eprintln!("[m2m] Ingesting {} vectors ({}D) via DatasetTransformer", vectors.nrows(), vectors.ncols());
+            eprintln!(
+                "[m2m] Ingesting {} vectors ({}D) via DatasetTransformer",
+                vectors.nrows(),
+                vectors.ncols()
+            );
 
             let mut store = SplatStore::new(config);
             let k = n_clusters.unwrap_or_else(|| (vectors.nrows() as f64).sqrt() as usize);
@@ -971,26 +1147,45 @@ fn main() {
                 Ok((n_splats, compression, stats)) => {
                     let elapsed = t0.elapsed();
                     store.build_index();
-                    println!("{}", serde_json::json!({
-                        "status": "ingested",
-                        "method": "kmeans",
-                        "original_count": stats.original_count,
-                        "n_splats": n_splats,
-                        "compression_ratio": (compression * 10000.0).round() / 10000.0,
-                        "transform_time_s": (stats.transform_time_s * 10000.0).round() / 10000.0,
-                        "total_ingest_ms": elapsed.as_millis() as u64,
-                        "dim": vectors.ncols(),
-                    }));
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "status": "ingested",
+                            "method": "kmeans",
+                            "original_count": stats.original_count,
+                            "n_splats": n_splats,
+                            "compression_ratio": (compression * 10000.0).round() / 10000.0,
+                            "transform_time_s": (stats.transform_time_s * 10000.0).round() / 10000.0,
+                            "total_ingest_ms": elapsed.as_millis() as u64,
+                            "dim": vectors.ncols(),
+                        })
+                    );
                 }
-                Err(e) => { eprintln!("Ingest error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Ingest error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
 
-        Commands::IngestHierarchical { input, n_clusters, min_cluster_size, seed } => {            let vectors = match load_vectors_bin(&input) {
+        Commands::IngestHierarchical {
+            input,
+            n_clusters,
+            min_cluster_size,
+            seed,
+        } => {
+            let vectors = match load_vectors_bin(&input) {
                 Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             };
-            eprintln!("[m2m] Hierarchical ingest {} vectors ({}D)", vectors.nrows(), vectors.ncols());
+            eprintln!(
+                "[m2m] Hierarchical ingest {} vectors ({}D)",
+                vectors.nrows(),
+                vectors.ncols()
+            );
 
             let mut store = SplatStore::new(config);
             let t0 = std::time::Instant::now();
@@ -999,26 +1194,44 @@ fn main() {
                 Ok((n_splats, compression, stats)) => {
                     let elapsed = t0.elapsed();
                     store.build_index();
-                    println!("{}", serde_json::json!({
-                        "status": "ingested",
-                        "method": "hierarchical_kmeans",
-                        "original_count": stats.original_count,
-                        "n_splats": n_splats,
-                        "compression_ratio": (compression * 10000.0).round() / 10000.0,
-                        "total_ingest_ms": elapsed.as_millis() as u64,
-                        "dim": vectors.ncols(),
-                    }));
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "status": "ingested",
+                            "method": "hierarchical_kmeans",
+                            "original_count": stats.original_count,
+                            "n_splats": n_splats,
+                            "compression_ratio": (compression * 10000.0).round() / 10000.0,
+                            "total_ingest_ms": elapsed.as_millis() as u64,
+                            "dim": vectors.ncols(),
+                        })
+                    );
                 }
-                Err(e) => { eprintln!("Ingest error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Ingest error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
 
-        Commands::IngestLeader { input, target_clusters, threshold, seed } => {
+        Commands::IngestLeader {
+            input,
+            target_clusters,
+            threshold,
+            seed,
+        } => {
             let vectors = match load_vectors_bin(&input) {
                 Ok(v) => v,
-                Err(e) => { eprintln!("Error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             };
-            eprintln!("[m2m] Leader clustering ingest {} vectors ({}D)", vectors.nrows(), vectors.ncols());
+            eprintln!(
+                "[m2m] Leader clustering ingest {} vectors ({}D)",
+                vectors.nrows(),
+                vectors.ncols()
+            );
 
             let mut store = SplatStore::new(config);
             let t0 = std::time::Instant::now();
@@ -1030,34 +1243,48 @@ fn main() {
                     // Persist the ingested data
                     let persist = make_persistence(&cli.data_dir, &cli.backend, false).ok();
                     if let Some(p) = persist {
-                        if let (Some(mu), Some(alpha), Some(kappa)) = (store.get_mu(), store.get_alpha(), store.get_kappa()) {
+                        if let (Some(mu), Some(alpha), Some(kappa)) =
+                            (store.get_mu(), store.get_alpha(), store.get_kappa())
+                        {
                             let n = store.n_active();
                             let vectors = mu.slice(ndarray::s![..n, ..]).to_owned();
                             if let Err(e) = p.save_vectors(&vectors, &"default".to_string()) {
                                 eprintln!("Warning: save failed: {}", e);
                             }
-                            if let Err(e) = p.save_energy_state(&vectors, &alpha.to_vec(), &kappa.to_vec()) {
+                            if let Err(e) =
+                                p.save_energy_state(&vectors, &alpha.to_vec(), &kappa.to_vec())
+                            {
                                 eprintln!("Warning: energy save failed: {}", e);
                             }
                         }
                     }
-                    println!("{}", serde_json::json!({
-                        "status": "ingested",
-                        "method": "leader_clustering",
-                        "original_count": stats.original_count,
-                        "n_splats": n_splats,
-                        "compression_ratio": (compression * 10000.0).round() / 10000.0,
-                        "total_ingest_ms": elapsed.as_millis() as u64,
-                        "dim": vectors.ncols(),
-                        "threshold": threshold,
-                        "saved": true,
-                    }));
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "status": "ingested",
+                            "method": "leader_clustering",
+                            "original_count": stats.original_count,
+                            "n_splats": n_splats,
+                            "compression_ratio": (compression * 10000.0).round() / 10000.0,
+                            "total_ingest_ms": elapsed.as_millis() as u64,
+                            "dim": vectors.ncols(),
+                            "threshold": threshold,
+                            "saved": true,
+                        })
+                    );
                 }
-                Err(e) => { eprintln!("Ingest error: {}", e); std::process::exit(1); }
+                Err(e) => {
+                    eprintln!("Ingest error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
 
-        Commands::FusedSearch { query, query_file, k } => {
+        Commands::FusedSearch {
+            query,
+            query_file,
+            k,
+        } => {
             let q = resolve_query(query.as_deref(), query_file.as_ref());
             eprintln!("[m2m] Query dim: {}", q.len());
             let (store, _) = load_or_create_store(&cli.data_dir, &config);
@@ -1068,7 +1295,11 @@ fn main() {
             let elapsed = t0.elapsed();
             eprintln!("[m2m] Search complete");
             let formatted = format_neighbors(&results, "json");
-            eprintln!("[m2m] Fused search: {} results in {:?}", results.len(), elapsed);
+            eprintln!(
+                "[m2m] Fused search: {} results in {:?}",
+                results.len(),
+                elapsed
+            );
             println!("{}", formatted);
         }
 
@@ -1088,38 +1319,45 @@ fn main() {
                 presets
             };
 
-            let info: Vec<serde_json::Value> = filtered.iter().map(|(name, c)| {
-                let mut store_config = c.clone();
-                store_config.device = "cpu".to_string();
-                store_config.enable_cuda = false;
-                store_config.finalize();
-                let store = SplatStore::new(store_config);
-                serde_json::json!({
-                    "preset": name,
-                    "max_splats": c.max_splats,
-                    "latent_dim": c.latent_dim,
-                    "subsystems": {
-                        "quantization": c.enable_quantization,
-                        "hnsw": c.enable_hnsw,
-                        "lsh": c.enable_lsh,
-                        "semantic_memory": c.enable_semantic_memory,
-                        "graph": c.enable_graph,
-                        "cuda": c.enable_cuda,
-                        "gpu_search": c.enable_gpu_search,
-                    },
-                    "runtime": {
-                        "has_quantization": store.has_quantization(),
-                        "has_hnsw": store.has_hnsw(),
-                        "has_lsh": store.has_lsh(),
-                        "has_semantic_memory": store.has_semantic_memory(),
-                    },
+            let info: Vec<serde_json::Value> = filtered
+                .iter()
+                .map(|(name, c)| {
+                    let mut store_config = c.clone();
+                    store_config.device = "cpu".to_string();
+                    store_config.enable_cuda = false;
+                    store_config.finalize();
+                    let store = SplatStore::new(store_config);
+                    serde_json::json!({
+                        "preset": name,
+                        "max_splats": c.max_splats,
+                        "latent_dim": c.latent_dim,
+                        "subsystems": {
+                            "quantization": c.enable_quantization,
+                            "hnsw": c.enable_hnsw,
+                            "lsh": c.enable_lsh,
+                            "semantic_memory": c.enable_semantic_memory,
+                            "graph": c.enable_graph,
+                            "cuda": c.enable_cuda,
+                            "gpu_search": c.enable_gpu_search,
+                        },
+                        "runtime": {
+                            "has_quantization": store.has_quantization(),
+                            "has_hnsw": store.has_hnsw(),
+                            "has_lsh": store.has_lsh(),
+                            "has_semantic_memory": store.has_semantic_memory(),
+                        },
+                    })
                 })
-            }).collect();
+                .collect();
 
             println!("{}", serde_json::to_string_pretty(&info).unwrap());
         }
 
-        Commands::HnswSearch { query, query_file, k } => {
+        Commands::HnswSearch {
+            query,
+            query_file,
+            k,
+        } => {
             let q = resolve_query(query.as_deref(), query_file.as_ref());
             // Load data, build with HNSW-enabled preset
             let mut cfg = M2MConfig::advanced(None);
@@ -1141,11 +1379,19 @@ fn main() {
             let t0 = std::time::Instant::now();
             let results = store.find_neighbors_fused(&q.view(), k);
             let elapsed = t0.elapsed();
-            eprintln!("[m2m] HNSW search: {} results in {:?}", results.len(), elapsed);
+            eprintln!(
+                "[m2m] HNSW search: {} results in {:?}",
+                results.len(),
+                elapsed
+            );
             println!("{}", format_neighbors(&results, "json"));
         }
 
-        Commands::LshSearch { query, query_file, k } => {
+        Commands::LshSearch {
+            query,
+            query_file,
+            k,
+        } => {
             let q = resolve_query(query.as_deref(), query_file.as_ref());
             // Use a config with LSH enabled
             let mut cfg = M2MConfig::default();
@@ -1165,11 +1411,20 @@ fn main() {
             let t0 = std::time::Instant::now();
             let results = store.find_neighbors_fused(&q.view(), k);
             let elapsed = t0.elapsed();
-            eprintln!("[m2m] LSH search: {} results in {:?}", results.len(), elapsed);
+            eprintln!(
+                "[m2m] LSH search: {} results in {:?}",
+                results.len(),
+                elapsed
+            );
             println!("{}", format_neighbors(&results, "json"));
         }
 
-        Commands::BenchGpuIngest { n_vectors, dim, n_clusters, n_queries } => {
+        Commands::BenchGpuIngest {
+            n_vectors,
+            dim,
+            n_clusters,
+            n_queries,
+        } => {
             use std::time::Instant;
 
             eprintln!("[m2m] Generating {} vectors ({}D)...", n_vectors, dim);
@@ -1194,8 +1449,12 @@ fn main() {
             let mut store = SplatStore::new(ingest_cfg);
             eprintln!("[m2m] Phase 1: DatasetTransformer ingest...");
             let t_ingest = Instant::now();
-            let (n_splats, compression, stats) = store.ingest_with_transformer(&dataset, n_clusters, 42)
-                .unwrap_or_else(|e| { eprintln!("Ingest error: {}", e); std::process::exit(1); });
+            let (n_splats, compression, stats) = store
+                .ingest_with_transformer(&dataset, n_clusters, 42)
+                .unwrap_or_else(|e| {
+                    eprintln!("Ingest error: {}", e);
+                    std::process::exit(1);
+                });
             let ingest_ms = t_ingest.elapsed().as_millis() as f64;
 
             // Phase 2: Build index
@@ -1205,8 +1464,12 @@ fn main() {
             let build_ms = t_build.elapsed().as_millis() as f64;
 
             // Phase 3: Linear search on compressed splats
-            eprintln!("[m2m] Phase 3: Search {} queries against {} splats...", n_queries, n_splats);
-            let query_arr = ndarray::Array2::from_shape_vec((n_queries, dim), queries.clone()).unwrap();
+            eprintln!(
+                "[m2m] Phase 3: Search {} queries against {} splats...",
+                n_queries, n_splats
+            );
+            let query_arr =
+                ndarray::Array2::from_shape_vec((n_queries, dim), queries.clone()).unwrap();
             let t_search = Instant::now();
             for i in 0..n_queries {
                 let _ = store.find_neighbors(&query_arr.row(i), 10);
@@ -1233,7 +1496,9 @@ fn main() {
                         "total_ms": gpu_upload_ms + gpu_query_ms,
                         "qps": n_queries as f64 / (gpu_query_ms / 1000.0),
                     }))
-                } else { None }
+                } else {
+                    None
+                }
             };
             #[cfg(not(feature = "cuda"))]
             let gpu_search: Option<serde_json::Value> = None;
@@ -1249,42 +1514,44 @@ fn main() {
 
             let total_pipeline = ingest_ms + build_ms + search_ms;
 
-            println!("{}", serde_json::json!({
-                "pipeline": "gpu_transformer",
-                "config": {
-                    "n_vectors": n_vectors,
-                    "dim": dim,
-                    "n_clusters": n_clusters,
-                    "n_queries": n_queries,
-                    "dataset_mb": (n_vectors * dim * 4) as f64 / 1_048_576.0,
-                },
-                "transformer": {
-                    "original_count": stats.original_count,
-                    "n_splats": n_splats,
-                    "compression_ratio": (compression * 10000.0).round() / 10000.0,
-                    "transform_time_s": stats.transform_time_s,
-                    "total_ingest_ms": ingest_ms as u64,
-                },
-                "index_build_ms": build_ms as u64,
-                "linear_search": {
-                    "total_ms": search_ms,
-                    "per_query_us": search_ms / n_queries as f64 * 1000.0,
-                    "qps": n_queries as f64 / (search_ms / 1000.0),
-                },
-                "fused_search": {
-                    "n_queries": n_fused,
-                    "total_ms": fused_ms,
-                    "per_query_us": fused_ms / n_fused as f64 * 1000.0,
-                },
-                "gpu_raw_search": gpu_search,
-                "total_pipeline_ms": total_pipeline as u64,
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "pipeline": "gpu_transformer",
+                    "config": {
+                        "n_vectors": n_vectors,
+                        "dim": dim,
+                        "n_clusters": n_clusters,
+                        "n_queries": n_queries,
+                        "dataset_mb": (n_vectors * dim * 4) as f64 / 1_048_576.0,
+                    },
+                    "transformer": {
+                        "original_count": stats.original_count,
+                        "n_splats": n_splats,
+                        "compression_ratio": (compression * 10000.0).round() / 10000.0,
+                        "transform_time_s": stats.transform_time_s,
+                        "total_ingest_ms": ingest_ms as u64,
+                    },
+                    "index_build_ms": build_ms as u64,
+                    "linear_search": {
+                        "total_ms": search_ms,
+                        "per_query_us": search_ms / n_queries as f64 * 1000.0,
+                        "qps": n_queries as f64 / (search_ms / 1000.0),
+                    },
+                    "fused_search": {
+                        "n_queries": n_fused,
+                        "total_ms": fused_ms,
+                        "per_query_us": fused_ms / n_fused as f64 * 1000.0,
+                    },
+                    "gpu_raw_search": gpu_search,
+                    "total_pipeline_ms": total_pipeline as u64,
+                })
+            );
         }
 
         Commands::Serve { port } => {
             println!("[m2m] Starting API server on port {}...", port);
-            let rt = tokio::runtime::Runtime::new()
-                .expect("Failed to create tokio runtime");
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
             rt.block_on(async {
                 if let Err(e) = m2m_vector_search::api_server::run_server(port).await {
                     eprintln!("[m2m] Server error: {}", e);

@@ -80,7 +80,11 @@ fn map_category(ftype: &str) -> ErrorCategory {
 fn situation_of(ep: &Value, dp: i64) -> String {
     let mut s = String::new();
     if let Some(steps) = ep["snapshot"].get("trajectory").and_then(|t| t.as_array()) {
-        let upto = if dp > 0 { (dp as usize).min(steps.len()) } else { steps.len() };
+        let upto = if dp > 0 {
+            (dp as usize).min(steps.len())
+        } else {
+            steps.len()
+        };
         for st in &steps[..upto] {
             s.push_str(st.get("obs").and_then(|o| o.as_str()).unwrap_or(""));
             s.push(' ');
@@ -124,8 +128,12 @@ fn bench_load(data_dir: &str) -> Bench {
         let has = ep["failure_instances"]["core_failure"]
             .as_array()
             .map(|cfs| {
-                cfs.iter()
-                    .any(|cf| !cf.get("diagnosis").and_then(|d| d.as_str()).unwrap_or("").is_empty())
+                cfs.iter().any(|cf| {
+                    !cf.get("diagnosis")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .is_empty()
+                })
             })
             .unwrap_or(false);
         if has {
@@ -144,7 +152,10 @@ fn bench_load(data_dir: &str) -> Bench {
     let mut tasks: Vec<Value> = all_tasks
         .into_iter()
         .filter(|t| {
-            let eps = t["evolution_snapshots"].as_array().cloned().unwrap_or_default();
+            let eps = t["evolution_snapshots"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             let materialized = eps
                 .iter()
                 .filter_map(|v| v.as_str())
@@ -158,7 +169,12 @@ fn bench_load(data_dir: &str) -> Bench {
         .collect();
     tasks.sort_by_key(|t| t["id"].as_str().unwrap_or("").to_string());
 
-    Bench { ep_by_id, tasks, lessons_of_rule: HashMap::new(), n_rules: 0 }
+    Bench {
+        ep_by_id,
+        tasks,
+        lessons_of_rule: HashMap::new(),
+        n_rules: 0,
+    }
 }
 
 /// Importa la memoria del bench en el agente (protocolo C1/C2) y arma el mapa
@@ -169,7 +185,9 @@ fn bench_import(agent: &mut AgentR, bench: &mut Bench) {
     // los desempates del heap del preflight) sea idéntico en cada corrida.
     let mut ep_lessons: Vec<(String, String, String, ErrorCategory, String)> = Vec::new();
     for (ep_id, ep) in bench.ep_by_id.iter() {
-        let Some(cfs) = ep["failure_instances"]["core_failure"].as_array() else { continue };
+        let Some(cfs) = ep["failure_instances"]["core_failure"].as_array() else {
+            continue;
+        };
         let game = ep["game"].as_str().unwrap_or("level-1").to_string();
         let model = ep["model"].as_str().unwrap_or("unknown").to_string();
         let model_short = model.rsplit('/').next().unwrap_or(&model).to_string();
@@ -187,7 +205,9 @@ fn bench_import(agent: &mut AgentR, bench: &mut Bench) {
             ));
         }
     }
-    ep_lessons.sort_by(|a, b| format!("{}|{}|{}", a.1, a.2, a.4).cmp(&format!("{}|{}|{}", b.1, b.2, b.4)));
+    ep_lessons.sort_by(|a, b| {
+        format!("{}|{}|{}", a.1, a.2, a.4).cmp(&format!("{}|{}|{}", b.1, b.2, b.4))
+    });
     for (_ep_id, game, model_short, cat, diag) in &ep_lessons {
         let what: String = diag.chars().take(160).collect();
         let id = agent.record_error(
@@ -199,7 +219,11 @@ fn bench_import(agent: &mut AgentR, bench: &mut Bench) {
             &[model_short.as_str(), "babyai", "level-1"],
             "",
         );
-        bench.lessons_of_rule.entry(id).or_default().insert(_ep_id.clone());
+        bench
+            .lessons_of_rule
+            .entry(id)
+            .or_default()
+            .insert(_ep_id.clone());
     }
     bench.n_rules = agent.stats().unique_incidents;
 }
@@ -278,7 +302,9 @@ fn technique_self_tuning(agent: &mut AgentR, bench: &Bench) -> Value {
         let ts = &task["test_snapshot"];
         let test_id = ts["episode_id"].as_str().unwrap_or("");
         let dp = ts["decision_point"].as_i64().unwrap_or(-1);
-        let Some(ep) = bench.ep_by_id.get(test_id) else { continue };
+        let Some(ep) = bench.ep_by_id.get(test_id) else {
+            continue;
+        };
         let lesson_eps: HashSet<&str> = task["evolution_snapshots"]
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
@@ -329,7 +355,9 @@ fn technique_deprecate_fp(agent: &mut AgentR, bench: &Bench) -> Value {
         let ts = &task["test_snapshot"];
         let test_id = ts["episode_id"].as_str().unwrap_or("");
         let dp = ts["decision_point"].as_i64().unwrap_or(-1);
-        let Some(ep) = bench.ep_by_id.get(test_id) else { continue };
+        let Some(ep) = bench.ep_by_id.get(test_id) else {
+            continue;
+        };
         let lesson_eps: HashSet<&str> = task["evolution_snapshots"]
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
@@ -363,7 +391,10 @@ fn technique_deprecate_fp(agent: &mut AgentR, bench: &Bench) -> Value {
     targets.sort_unstable(); // determinista
     let mut deprecated: Vec<Value> = Vec::new();
     for id in &targets {
-        let (p, h) = (k_pred.get(id).copied().unwrap_or(0), k_hit.get(id).copied().unwrap_or(0));
+        let (p, h) = (
+            k_pred.get(id).copied().unwrap_or(0),
+            k_hit.get(id).copied().unwrap_or(0),
+        );
         let reason = format!(
             "R02 G1->G2: FP sistemático medido en tuning split ({} predicciones top-1, {} hits)",
             p, h
@@ -386,7 +417,10 @@ fn technique_deprecate_fp(agent: &mut AgentR, bench: &Bench) -> Value {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn now_ms() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 fn spawn_generation(state: &PathBuf) -> AgentR {
@@ -453,8 +487,10 @@ fn run_mode(data_dir: &str, out_dir: &str) -> i32 {
         g1m.flush().expect("flush G1m");
         let prev = &generations[0];
         let (d1, d3) = (
-            m["top1_hits"].as_i64().unwrap_or(0) - prev["metrics"]["top1_hits"].as_i64().unwrap_or(0),
-            m["top3_hits"].as_i64().unwrap_or(0) - prev["metrics"]["top3_hits"].as_i64().unwrap_or(0),
+            m["top1_hits"].as_i64().unwrap_or(0)
+                - prev["metrics"]["top1_hits"].as_i64().unwrap_or(0),
+            m["top3_hits"].as_i64().unwrap_or(0)
+                - prev["metrics"]["top3_hits"].as_i64().unwrap_or(0),
         );
         let payload = json!({
             "harness": "rsi_generations", "gen": 1, "parent": 0,
@@ -494,8 +530,10 @@ fn run_mode(data_dir: &str, out_dir: &str) -> i32 {
         g2m.flush().expect("flush G2m");
         let prev = &generations[1];
         let (d1, d3) = (
-            m["top1_hits"].as_i64().unwrap_or(0) - prev["metrics"]["top1_hits"].as_i64().unwrap_or(0),
-            m["top3_hits"].as_i64().unwrap_or(0) - prev["metrics"]["top3_hits"].as_i64().unwrap_or(0),
+            m["top1_hits"].as_i64().unwrap_or(0)
+                - prev["metrics"]["top1_hits"].as_i64().unwrap_or(0),
+            m["top3_hits"].as_i64().unwrap_or(0)
+                - prev["metrics"]["top3_hits"].as_i64().unwrap_or(0),
         );
         let payload = json!({
             "harness": "rsi_generations", "gen": 2, "parent": 1,
@@ -569,8 +607,8 @@ fn verify_mode(run_dir: &str) -> i32 {
         // 2. Las métricas declaradas deben estar CONTENIDAS en el payload firmado.
         for metric in ["top1_hits", "top3_hits"] {
             let value = g["metrics"][metric].clone();
-            let verdict =
-                store.n3_check(&json!({"receipt_id": rid, "claim": {"metric": metric, "value": value}}));
+            let verdict = store
+                .n3_check(&json!({"receipt_id": rid, "claim": {"metric": metric, "value": value}}));
             if verdict != m2m_vector_search::receipts::N3Verdict::Pass {
                 failures.push(format!(
                     "G{}: claim {}={} no respaldado por el receipt ({:?})",
@@ -605,7 +643,10 @@ fn verify_mode(run_dir: &str) -> i32 {
         );
     }
     if failures.is_empty() {
-        println!("VERIFY PASS: {} generaciones, firmas y claims consistentes", gens.len());
+        println!(
+            "VERIFY PASS: {} generaciones, firmas y claims consistentes",
+            gens.len()
+        );
         0
     } else {
         for f in &failures {

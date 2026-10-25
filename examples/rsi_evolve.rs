@@ -39,7 +39,11 @@ fn map_category(ftype: &str) -> ErrorCategory {
 fn situation_of(ep: &Value, dp: i64) -> String {
     let mut s = String::new();
     if let Some(steps) = ep["snapshot"].get("trajectory").and_then(|t| t.as_array()) {
-        let upto = if dp > 0 { (dp as usize).min(steps.len()) } else { steps.len() };
+        let upto = if dp > 0 {
+            (dp as usize).min(steps.len())
+        } else {
+            steps.len()
+        };
         for st in &steps[..upto] {
             s.push_str(st.get("obs").and_then(|o| o.as_str()).unwrap_or(""));
             s.push(' ');
@@ -79,8 +83,12 @@ fn bench_load(data_dir: &str) -> (HashMap<String, Value>, Vec<Value>) {
             ep["failure_instances"]["core_failure"]
                 .as_array()
                 .map(|cfs| {
-                    cfs.iter()
-                        .any(|cf| !cf.get("diagnosis").and_then(|d| d.as_str()).unwrap_or("").is_empty())
+                    cfs.iter().any(|cf| {
+                        !cf.get("diagnosis")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("")
+                            .is_empty()
+                    })
                 })
                 .unwrap_or(false)
         })
@@ -95,7 +103,10 @@ fn bench_load(data_dir: &str) -> (HashMap<String, Value>, Vec<Value>) {
     let mut tasks: Vec<Value> = all_tasks
         .into_iter()
         .filter(|t| {
-            let eps = t["evolution_snapshots"].as_array().cloned().unwrap_or_default();
+            let eps = t["evolution_snapshots"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             let materialized = eps
                 .iter()
                 .filter_map(|v| v.as_str())
@@ -114,7 +125,9 @@ fn bench_load(data_dir: &str) -> (HashMap<String, Value>, Vec<Value>) {
 fn bench_import(agent: &mut AgentR, bench: &mut Bench, ep_by_id: &HashMap<String, Value>) {
     let mut ep_lessons: Vec<(String, String, String, ErrorCategory, String)> = Vec::new();
     for (ep_id, ep) in ep_by_id.iter() {
-        let Some(cfs) = ep["failure_instances"]["core_failure"].as_array() else { continue };
+        let Some(cfs) = ep["failure_instances"]["core_failure"].as_array() else {
+            continue;
+        };
         let game = ep["game"].as_str().unwrap_or("level-1").to_string();
         let model = ep["model"].as_str().unwrap_or("unknown").to_string();
         let model_short = model.rsplit('/').next().unwrap_or(&model).to_string();
@@ -132,7 +145,9 @@ fn bench_import(agent: &mut AgentR, bench: &mut Bench, ep_by_id: &HashMap<String
             ));
         }
     }
-    ep_lessons.sort_by(|a, b| format!("{}|{}|{}", a.1, a.2, a.4).cmp(&format!("{}|{}|{}", b.1, b.2, b.4)));
+    ep_lessons.sort_by(|a, b| {
+        format!("{}|{}|{}", a.1, a.2, a.4).cmp(&format!("{}|{}|{}", b.1, b.2, b.4))
+    });
     for (ep_id, game, model_short, cat, diag) in &ep_lessons {
         let what: String = diag.chars().take(160).collect();
         let id = agent.record_error(
@@ -144,7 +159,11 @@ fn bench_import(agent: &mut AgentR, bench: &mut Bench, ep_by_id: &HashMap<String
             &[model_short.as_str(), "babyai", "level-1"],
             "",
         );
-        bench.lessons_of_rule.entry(id).or_default().insert(ep_id.clone());
+        bench
+            .lessons_of_rule
+            .entry(id)
+            .or_default()
+            .insert(ep_id.clone());
     }
 }
 
@@ -162,13 +181,20 @@ fn correct_rules_for(bench: &Bench, task: &Value) -> HashSet<u64> {
 }
 
 /// Holdout con W FORZADO por parámetro (no muta el snapshot del probe).
-fn holdout_measure_w(agent: &mut AgentR, bench: &Bench, tasks: &[Value], w: f64) -> (u64, u64, u64) {
+fn holdout_measure_w(
+    agent: &mut AgentR,
+    bench: &Bench,
+    tasks: &[Value],
+    w: f64,
+) -> (u64, u64, u64) {
     let (mut top1, mut top3, mut n) = (0u64, 0u64, 0u64);
     for task in tasks {
         let ts = &task["test_snapshot"];
         let test_id = ts["episode_id"].as_str().unwrap_or("");
         let dp = ts["decision_point"].as_i64().unwrap_or(-1);
-        let Some(ep) = bench.ep_by_id.get(test_id) else { continue };
+        let Some(ep) = bench.ep_by_id.get(test_id) else {
+            continue;
+        };
         let correct = correct_rules_for(bench, task);
         if correct.is_empty() {
             continue;
@@ -178,7 +204,8 @@ fn holdout_measure_w(agent: &mut AgentR, bench: &Bench, tasks: &[Value], w: f64)
         let model = ep["model"].as_str().unwrap_or("unknown");
         let model_short = model.rsplit('/').next().unwrap_or(model);
         let situation = situation_of(ep, dp);
-        let pf = agent.preflight_v2_hybrid_w(game, &[model_short, "babyai", "level-1"], &situation, w);
+        let pf =
+            agent.preflight_v2_hybrid_w(game, &[model_short, "babyai", "level-1"], &situation, w);
         let top: Vec<u64> = pf.top_rules.iter().map(|r| r.id).collect();
         top1 += top.first().map(|id| correct.contains(id)).unwrap_or(false) as u64;
         top3 += top.iter().any(|id| correct.contains(id)) as u64;
@@ -228,17 +255,27 @@ fn main() {
     // protocolo R02: lessons_of_rule del GT vive en el closure vía `lessons`.)
     let mut base = AgentR::with_state_path(state_path.clone());
     let space = EvolveSpace::default();
-    let report = evolve(&mut base, &store, &space, |_agent, w| {
-        let mut probe = AgentR::with_state_path(state_path.clone());
-        let bench_probe = Bench {
-            ep_by_id: ep_by_id.clone(),
-            tasks: Vec::new(),
-            lessons_of_rule: lessons.clone(),
-        };
-        let (n, top1, top3) =
-            holdout_measure_w(&mut probe, &bench_probe, &tasks[split..], w);
-        ReplayScore { w, score: top1 as f64, tiebreak: top3 as f64, n }
-    }, 0.5);
+    let report = evolve(
+        &mut base,
+        &store,
+        &space,
+        |_agent, w| {
+            let mut probe = AgentR::with_state_path(state_path.clone());
+            let bench_probe = Bench {
+                ep_by_id: ep_by_id.clone(),
+                tasks: Vec::new(),
+                lessons_of_rule: lessons.clone(),
+            };
+            let (n, top1, top3) = holdout_measure_w(&mut probe, &bench_probe, &tasks[split..], w);
+            ReplayScore {
+                w,
+                score: top1 as f64,
+                tiebreak: top3 as f64,
+                n,
+            }
+        },
+        0.5,
+    );
 
     let mut report_json = serde_json::to_value(&report).unwrap_or_default();
     report_json["holdout_n"] = json!(tasks.len() - split);

@@ -45,7 +45,11 @@ fn map_category(ftype: &str) -> ErrorCategory {
 fn situation_of(ep: &Value, dp: i64) -> String {
     let mut s = String::new();
     if let Some(steps) = ep["snapshot"].get("trajectory").and_then(|t| t.as_array()) {
-        let upto = if dp > 0 { (dp as usize).min(steps.len()) } else { steps.len() };
+        let upto = if dp > 0 {
+            (dp as usize).min(steps.len())
+        } else {
+            steps.len()
+        };
         for st in &steps[..upto] {
             s.push_str(st.get("obs").and_then(|o| o.as_str()).unwrap_or(""));
             s.push(' ');
@@ -86,8 +90,12 @@ fn bench_load(data_dir: &str) -> (HashMap<String, Value>, Vec<Value>) {
             ep["failure_instances"]["core_failure"]
                 .as_array()
                 .map(|cfs| {
-                    cfs.iter()
-                        .any(|cf| !cf.get("diagnosis").and_then(|d| d.as_str()).unwrap_or("").is_empty())
+                    cfs.iter().any(|cf| {
+                        !cf.get("diagnosis")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("")
+                            .is_empty()
+                    })
                 })
                 .unwrap_or(false)
         })
@@ -102,7 +110,10 @@ fn bench_load(data_dir: &str) -> (HashMap<String, Value>, Vec<Value>) {
     let mut tasks: Vec<Value> = all_tasks
         .into_iter()
         .filter(|t| {
-            let eps = t["evolution_snapshots"].as_array().cloned().unwrap_or_default();
+            let eps = t["evolution_snapshots"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             let materialized = eps
                 .iter()
                 .filter_map(|v| v.as_str())
@@ -121,7 +132,9 @@ fn bench_load(data_dir: &str) -> (HashMap<String, Value>, Vec<Value>) {
 fn bench_import(agent: &mut AgentR, bench: &mut Bench, ep_by_id: &HashMap<String, Value>) {
     let mut ep_lessons: Vec<(String, String, String, ErrorCategory, String)> = Vec::new();
     for (ep_id, ep) in ep_by_id.iter() {
-        let Some(cfs) = ep["failure_instances"]["core_failure"].as_array() else { continue };
+        let Some(cfs) = ep["failure_instances"]["core_failure"].as_array() else {
+            continue;
+        };
         let game = ep["game"].as_str().unwrap_or("level-1").to_string();
         let model = ep["model"].as_str().unwrap_or("unknown").to_string();
         let model_short = model.rsplit('/').next().unwrap_or(&model).to_string();
@@ -139,7 +152,9 @@ fn bench_import(agent: &mut AgentR, bench: &mut Bench, ep_by_id: &HashMap<String
             ));
         }
     }
-    ep_lessons.sort_by(|a, b| format!("{}|{}|{}", a.1, a.2, a.4).cmp(&format!("{}|{}|{}", b.1, b.2, b.4)));
+    ep_lessons.sort_by(|a, b| {
+        format!("{}|{}|{}", a.1, a.2, a.4).cmp(&format!("{}|{}|{}", b.1, b.2, b.4))
+    });
     for (ep_id, game, model_short, cat, diag) in &ep_lessons {
         let what: String = diag.chars().take(160).collect();
         let id = agent.record_error(
@@ -151,7 +166,11 @@ fn bench_import(agent: &mut AgentR, bench: &mut Bench, ep_by_id: &HashMap<String
             &[model_short.as_str(), "babyai", "level-1"],
             "",
         );
-        bench.lessons_of_rule.entry(id).or_default().insert(ep_id.clone());
+        bench
+            .lessons_of_rule
+            .entry(id)
+            .or_default()
+            .insert(ep_id.clone());
     }
 }
 
@@ -193,7 +212,9 @@ fn tuning_split(
         let ts = &task["test_snapshot"];
         let test_id = ts["episode_id"].as_str().unwrap_or("");
         let dp = ts["decision_point"].as_i64().unwrap_or(-1);
-        let Some(ep) = bench.ep_by_id.get(test_id) else { continue };
+        let Some(ep) = bench.ep_by_id.get(test_id) else {
+            continue;
+        };
         let correct = correct_rules_for(bench, task);
         if correct.is_empty() {
             continue;
@@ -203,7 +224,9 @@ fn tuning_split(
         let model_short = model.rsplit('/').next().unwrap_or(model);
         let situation = situation_of(ep, dp);
         let pf = agent.preflight_v2_hybrid(game, &[model_short, "babyai", "level-1"], &situation);
-        let Some(pred_lib) = pf.top_rules.first().map(|r| r.id) else { continue };
+        let Some(pred_lib) = pf.top_rules.first().map(|r| r.id) else {
+            continue;
+        };
         let pred_correct = correct.contains(&pred_lib);
 
         if posthoc {
@@ -242,7 +265,9 @@ fn holdout_measure(agent: &mut AgentR, bench: &Bench, tasks: &[Value]) -> (u64, 
         let ts = &task["test_snapshot"];
         let test_id = ts["episode_id"].as_str().unwrap_or("");
         let dp = ts["decision_point"].as_i64().unwrap_or(-1);
-        let Some(ep) = bench.ep_by_id.get(test_id) else { continue };
+        let Some(ep) = bench.ep_by_id.get(test_id) else {
+            continue;
+        };
         let correct = correct_rules_for(bench, task);
         if correct.is_empty() {
             continue;
