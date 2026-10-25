@@ -167,7 +167,6 @@ impl Critic {
         output: &str,
         context: &str,
     ) -> Result<Value, String> {
-        let system = CRITIC_SYSTEM;
         let user = format!(
             "Operación: {operation}\n\nContexto:\n{context}\n\nOutput a criticar:\n{output}\n\nRespondé solo el JSON."
         );
@@ -197,6 +196,8 @@ pub fn self_debug(
     budget: usize,
 ) -> RefineOutcome {
     let budget = budget.clamp(1, 5);
+    // `mut` + reassign solo se usan con feature `critic` (retry con candidato crudo).
+    #[cfg_attr(not(feature = "critic"), allow(unused_mut))]
     let mut current = output.clone();
     let mut last: Option<RefineOutcome> = None;
     for i in 0..budget {
@@ -206,8 +207,9 @@ pub fn self_debug(
             .unwrap_or("unverifiable")
             .to_string();
         let decision = out.decision;
-        let receipt_result_none = out.receipt_result.is_none();
+        #[cfg(feature = "critic")]
         let critic_raw = out.critic_raw.clone();
+        let receipt_result_none = out.receipt_result.is_none();
         if overall == "pass" {
             return out; // early-exit: verificado en la iteración i+1
         }
@@ -424,6 +426,7 @@ mod cache_tests {
 }
 
 /// FNV-1a 64-bit (key de cache del crítico).
+#[cfg(feature = "critic")]
 fn fnv1a_64(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;
     for &b in bytes {

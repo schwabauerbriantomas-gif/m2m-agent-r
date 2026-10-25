@@ -48,10 +48,9 @@ fn category_of(s: &str) -> ErrorCategory {
 }
 
 fn open_agent() -> AgentR {
-    let mut agent = AgentR::with_state_path(state_path());
     // CLI de uso diario: si el usuario pidió AGENT_R_NO_SEED, con_state_path
     // ya no carga semillas; nada extra que hacer acá.
-    agent
+    AgentR::with_state_path(state_path())
 }
 
 fn main() {

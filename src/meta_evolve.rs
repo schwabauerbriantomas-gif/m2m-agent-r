@@ -29,7 +29,7 @@
 
 use crate::agent_r::AgentR;
 use crate::receipts::ReceiptStore;
-use serde_json::{json, Value};
+use serde_json::json;
 
 /// Espacio de búsqueda acotado (determinista, SIN mutación estocástica:
 /// reproducibilidad total — mismo grid, mismo resultado).
