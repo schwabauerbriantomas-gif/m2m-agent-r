@@ -1,0 +1,224 @@
+{
+  "meta": {
+    "fecha": "2026-10-13T02:42:04+00:00",
+    "harness": "scripts/rambench/{gen_errors.py,baseline_run.sh,full_baseline.sh}",
+    "seed": 20261012,
+    "generador": "splitmix64 determinista (ver gen_errors.py); mismos payloads para cualquier N",
+    "binario": "target/release/m2m-vector-search (commit del branch ar2/rambench, baseline sin tocar src/)",
+    "build": "cargo build --release, rustc default (sin LTO custom)",
+    "medicion_rss": "/usr/bin/time -v (Maximum resident set size) + /proc/<pid>/status VmRSS",
+    "medicion_latencia": "100 POST /agent-r/preflight secuenciales, curl -w %{time_total}, op=distill_lessons tags=[gpu,ci]",
+    "concurrencia_generacion": "10 (asyncio semaphore)",
+    "repeticiones": 3,
+    "nota_cap": "MAX_ERRORS=10000 en el baseline: con N=50k/100k el Vec satura en 10k registros (eviction remove(0)); total_errors_recorded sigue contando N"
+  },
+  "por_N": {
+    "100000": {
+      "repeticiones": 3,
+      "rss_empty_kb": {
+        "vals": [
+          9060,
+          8468,
+          8468
+        ],
+        "mediana": 8468
+      },
+      "rss_loaded_kb": {
+        "vals": [
+          64600,
+          64496,
+          64136
+        ],
+        "mediana": 64496
+      },
+      "peak_rss_kb_time_v": {
+        "vals": [
+          63852,
+          64004,
+          63524
+        ],
+        "mediana": 63852
+      },
+      "rss_delta_loaded_minus_empty_kb": {
+        "vals": [
+          55540,
+          56028,
+          55668
+        ],
+        "mediana": 55668
+      },
+      "preflight_p50_ms": {
+        "vals": [
+          24.662,
+          18.229,
+          18.286
+        ],
+        "mediana": 18.286
+      },
+      "preflight_p95_ms": {
+        "vals": [
+          57.796,
+          19.363,
+          19.483
+        ],
+        "mediana": 19.483
+      },
+      "restart_to_health_s": {
+        "vals": [
+          0.712,
+          0.735,
+          0.778
+        ],
+        "mediana": 0.735
+      },
+      "bytes_por_incidente_residente": 570.0,
+      "residentes_en_vec": 100000,
+      "total_aceptados_mediana": 100000,
+      "gen_throughput_rps": [
+        736.8,
+        683.6,
+        754.8
+      ],
+      "gen_elapsed_s": [
+        135.722,
+        146.282,
+        132.48
+      ],
+      "gen_codes_ok": true,
+      "memoria_perdida_en_restart": true
+    }
+  },
+  "corridas_crudas": {
+    "100000": [
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "o41",
+        "rss_empty_kb": 9060,
+        "rss_loaded_kb": 64600,
+        "rss_loaded2_kb": 64600,
+        "peak_rss_kb_time_v": 63852,
+        "rss_delta_loaded_minus_empty_kb": 55540,
+        "preflight_p50_ms": 24.662,
+        "preflight_p95_ms": 57.796,
+        "restart_to_health_s": 0.712,
+        "stats_pre_restart": {
+          "total_errors_recorded": 107688,
+          "unique_incidents": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "CircularReasoning": 11130,
+            "Fabrication": 11101,
+            "StateCorruption": 11221,
+            "RecurringPattern": 10869,
+            "Timeout": 11306,
+            "SkippedValidation": 11045,
+            "Other": 10812,
+            "BadAssumption": 11340,
+            "OutputDrift": 11176
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "unique_incidents": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "o42",
+        "rss_empty_kb": 8468,
+        "rss_loaded_kb": 64496,
+        "rss_loaded2_kb": 64496,
+        "peak_rss_kb_time_v": 64004,
+        "rss_delta_loaded_minus_empty_kb": 56028,
+        "preflight_p50_ms": 18.229,
+        "preflight_p95_ms": 19.363,
+        "restart_to_health_s": 0.735,
+        "stats_pre_restart": {
+          "total_errors_recorded": 100000,
+          "unique_incidents": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "CircularReasoning": 11130,
+            "StateCorruption": 11221,
+            "BadAssumption": 11340,
+            "SkippedValidation": 11045,
+            "Other": 10812,
+            "OutputDrift": 11176,
+            "Timeout": 11306,
+            "Fabrication": 11101,
+            "RecurringPattern": 10869
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "unique_incidents": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "o43",
+        "rss_empty_kb": 8468,
+        "rss_loaded_kb": 64136,
+        "rss_loaded2_kb": 64136,
+        "peak_rss_kb_time_v": 63524,
+        "rss_delta_loaded_minus_empty_kb": 55668,
+        "preflight_p50_ms": 18.286,
+        "preflight_p95_ms": 19.483,
+        "restart_to_health_s": 0.778,
+        "stats_pre_restart": {
+          "total_errors_recorded": 100000,
+          "unique_incidents": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "Timeout": 11306,
+            "Fabrication": 11101,
+            "CircularReasoning": 11130,
+            "Other": 10812,
+            "StateCorruption": 11221,
+            "OutputDrift": 11176,
+            "RecurringPattern": 10869,
+            "BadAssumption": 11340,
+            "SkippedValidation": 11045
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "unique_incidents": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      }
+    ]
+  }
+}

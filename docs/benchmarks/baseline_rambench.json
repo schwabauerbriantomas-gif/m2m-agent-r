@@ -1,0 +1,218 @@
+{
+  "meta": {
+    "fecha": "2026-10-12T23:44:18+00:00",
+    "harness": "scripts/rambench/{gen_errors.py,baseline_run.sh,full_baseline.sh}",
+    "seed": 20261012,
+    "generador": "splitmix64 determinista (ver gen_errors.py); mismos payloads para cualquier N",
+    "binario": "target/release/m2m-vector-search (commit del branch ar2/rambench, baseline sin tocar src/)",
+    "build": "cargo build --release, rustc default (sin LTO custom)",
+    "medicion_rss": "/usr/bin/time -v (Maximum resident set size) + /proc/<pid>/status VmRSS",
+    "medicion_latencia": "100 POST /agent-r/preflight secuenciales, curl -w %{time_total}, op=distill_lessons tags=[gpu,ci]",
+    "concurrencia_generacion": "10 (asyncio semaphore)",
+    "repeticiones": 3,
+    "nota_cap": "MAX_ERRORS=10000 en el baseline: con N=50k/100k el Vec satura en 10k registros (eviction remove(0)); total_errors_recorded sigue contando N"
+  },
+  "por_N": {
+    "100000": {
+      "repeticiones": 3,
+      "rss_empty_kb": {
+        "vals": [
+          8004,
+          8252,
+          7936
+        ],
+        "mediana": 8004
+      },
+      "rss_loaded_kb": {
+        "vals": [
+          76296,
+          75868,
+          75628
+        ],
+        "mediana": 75868
+      },
+      "peak_rss_kb_time_v": {
+        "vals": [
+          85140,
+          83060,
+          82676
+        ],
+        "mediana": 83060
+      },
+      "rss_delta_loaded_minus_empty_kb": {
+        "vals": [
+          68292,
+          67616,
+          67692
+        ],
+        "mediana": 67692
+      },
+      "preflight_p50_ms": {
+        "vals": [
+          42.727,
+          42.526,
+          38.614
+        ],
+        "mediana": 42.526
+      },
+      "preflight_p95_ms": {
+        "vals": [
+          53.603,
+          49.981,
+          42.183
+        ],
+        "mediana": 49.981
+      },
+      "restart_to_health_s": {
+        "vals": [
+          1.334,
+          1.318,
+          1.099
+        ],
+        "mediana": 1.318
+      },
+      "bytes_por_incidente_residente": 6931.7,
+      "residentes_en_vec": 10000,
+      "total_aceptados_mediana": 100000,
+      "gen_throughput_rps": [
+        276.3,
+        283.0,
+        308.1
+      ],
+      "gen_elapsed_s": [
+        361.928,
+        353.303,
+        324.524
+      ],
+      "gen_codes_ok": true,
+      "memoria_perdida_en_restart": true
+    }
+  },
+  "corridas_crudas": {
+    "100000": [
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "base1",
+        "rss_empty_kb": 8004,
+        "rss_loaded_kb": 76296,
+        "rss_loaded2_kb": 76296,
+        "peak_rss_kb_time_v": 85140,
+        "rss_delta_loaded_minus_empty_kb": 68292,
+        "preflight_p50_ms": 42.727,
+        "preflight_p95_ms": 53.603,
+        "restart_to_health_s": 1.334,
+        "stats_pre_restart": {
+          "total_errors_recorded": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "Fabrication": 11101,
+            "CircularReasoning": 11130,
+            "Other": 10812,
+            "StateCorruption": 11221,
+            "Timeout": 11306,
+            "SkippedValidation": 11045,
+            "BadAssumption": 11340,
+            "OutputDrift": 11176,
+            "RecurringPattern": 10869
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "base2",
+        "rss_empty_kb": 8252,
+        "rss_loaded_kb": 75868,
+        "rss_loaded2_kb": 75868,
+        "peak_rss_kb_time_v": 83060,
+        "rss_delta_loaded_minus_empty_kb": 67616,
+        "preflight_p50_ms": 42.526,
+        "preflight_p95_ms": 49.981,
+        "restart_to_health_s": 1.318,
+        "stats_pre_restart": {
+          "total_errors_recorded": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "StateCorruption": 11221,
+            "OutputDrift": 11176,
+            "Timeout": 11306,
+            "CircularReasoning": 11130,
+            "Fabrication": 11101,
+            "Other": 10812,
+            "RecurringPattern": 10869,
+            "SkippedValidation": 11045,
+            "BadAssumption": 11340
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "base3",
+        "rss_empty_kb": 7936,
+        "rss_loaded_kb": 75628,
+        "rss_loaded2_kb": 75628,
+        "peak_rss_kb_time_v": 82676,
+        "rss_delta_loaded_minus_empty_kb": 67692,
+        "preflight_p50_ms": 38.614,
+        "preflight_p95_ms": 42.183,
+        "restart_to_health_s": 1.099,
+        "stats_pre_restart": {
+          "total_errors_recorded": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "Timeout": 11306,
+            "BadAssumption": 11340,
+            "RecurringPattern": 10869,
+            "Other": 10812,
+            "StateCorruption": 11221,
+            "Fabrication": 11101,
+            "SkippedValidation": 11045,
+            "CircularReasoning": 11130,
+            "OutputDrift": 11176
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      }
+    ]
+  }
+}

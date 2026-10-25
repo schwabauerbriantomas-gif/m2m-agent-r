@@ -1,0 +1,635 @@
+{
+  "meta": {
+    "fecha": "2026-10-12T22:58:10+00:00",
+    "harness": "scripts/rambench/{gen_errors.py,baseline_run.sh,full_baseline.sh}",
+    "seed": 20261012,
+    "generador": "splitmix64 determinista (ver gen_errors.py); mismos payloads para cualquier N",
+    "binario": "target/release/m2m-vector-search del branch ar2/rambench-nocap (UNICO cambio en src/: MAX_ERRORS 10_000 -> 2_000_000, commit en ese branch)",
+    "build": "cargo build --release, rustc default (sin LTO custom)",
+    "medicion_rss": "/usr/bin/time -v (Maximum resident set size) + /proc/<pid>/status VmRSS",
+    "medicion_latencia": "100 POST /agent-r/preflight secuenciales, curl -w %{time_total}, op=distill_lessons tags=[gpu,ci]",
+    "concurrencia_generacion": "10 (asyncio semaphore)",
+    "repeticiones": 3,
+    "nota_cap": "MAX_ERRORS=10000 en el baseline: con N=50k/100k el Vec satura en 10k registros (eviction remove(0)); total_errors_recorded sigue contando N",
+    "max_errors_efectivo": 2000000,
+    "proposito": "firma de RAM SIN el cap de 10k: escala real del Vec<ErrorRecord> y de la latencia de preflight"
+  },
+  "por_N": {
+    "10000": {
+      "repeticiones": 3,
+      "rss_empty_kb": {
+        "vals": [
+          8000,
+          8052,
+          7968
+        ],
+        "mediana": 8000
+      },
+      "rss_loaded_kb": {
+        "vals": [
+          15724,
+          16052,
+          15968
+        ],
+        "mediana": 15968
+      },
+      "peak_rss_kb_time_v": {
+        "vals": [
+          15652,
+          15952,
+          16156
+        ],
+        "mediana": 15952
+      },
+      "rss_delta_loaded_minus_empty_kb": {
+        "vals": [
+          7724,
+          8000,
+          8000
+        ],
+        "mediana": 8000
+      },
+      "preflight_p50_ms": {
+        "vals": [
+          2.683,
+          2.527,
+          2.481
+        ],
+        "mediana": 2.527
+      },
+      "preflight_p95_ms": {
+        "vals": [
+          3.086,
+          2.905,
+          2.898
+        ],
+        "mediana": 2.905
+      },
+      "restart_to_health_s": {
+        "vals": [
+          0.591,
+          0.599,
+          0.773
+        ],
+        "mediana": 0.599
+      },
+      "bytes_por_incidente_residente": 819.2,
+      "residentes_en_vec": 10000,
+      "total_aceptados_mediana": 10000,
+      "gen_throughput_rps": [
+        794.7,
+        788.6,
+        782.5
+      ],
+      "gen_elapsed_s": [
+        12.583,
+        12.681,
+        12.78
+      ],
+      "gen_codes_ok": true,
+      "memoria_perdida_en_restart": true
+    },
+    "50000": {
+      "repeticiones": 3,
+      "rss_empty_kb": {
+        "vals": [
+          8192,
+          8212,
+          8184
+        ],
+        "mediana": 8192
+      },
+      "rss_loaded_kb": {
+        "vals": [
+          42716,
+          42836,
+          42748
+        ],
+        "mediana": 42748
+      },
+      "peak_rss_kb_time_v": {
+        "vals": [
+          45216,
+          45968,
+          44452
+        ],
+        "mediana": 45216
+      },
+      "rss_delta_loaded_minus_empty_kb": {
+        "vals": [
+          34524,
+          34624,
+          34564
+        ],
+        "mediana": 34564
+      },
+      "preflight_p50_ms": {
+        "vals": [
+          9.761,
+          10.309,
+          10.015
+        ],
+        "mediana": 10.015
+      },
+      "preflight_p95_ms": {
+        "vals": [
+          11.505,
+          11.206,
+          11.671
+        ],
+        "mediana": 11.505
+      },
+      "restart_to_health_s": {
+        "vals": [
+          0.772,
+          0.658,
+          0.568
+        ],
+        "mediana": 0.658
+      },
+      "bytes_por_incidente_residente": 707.9,
+      "residentes_en_vec": 50000,
+      "total_aceptados_mediana": 50000,
+      "gen_throughput_rps": [
+        699.2,
+        682.5,
+        703.6
+      ],
+      "gen_elapsed_s": [
+        71.51,
+        73.259,
+        71.058
+      ],
+      "gen_codes_ok": true,
+      "memoria_perdida_en_restart": true
+    },
+    "100000": {
+      "repeticiones": 3,
+      "rss_empty_kb": {
+        "vals": [
+          7948,
+          7996,
+          7956
+        ],
+        "mediana": 7956
+      },
+      "rss_loaded_kb": {
+        "vals": [
+          75336,
+          75304,
+          75360
+        ],
+        "mediana": 75336
+      },
+      "peak_rss_kb_time_v": {
+        "vals": [
+          79244,
+          80920,
+          81212
+        ],
+        "mediana": 80920
+      },
+      "rss_delta_loaded_minus_empty_kb": {
+        "vals": [
+          67388,
+          67308,
+          67404
+        ],
+        "mediana": 67388
+      },
+      "preflight_p50_ms": {
+        "vals": [
+          20.338,
+          19.062,
+          19.502
+        ],
+        "mediana": 19.502
+      },
+      "preflight_p95_ms": {
+        "vals": [
+          23.764,
+          20.358,
+          21.766
+        ],
+        "mediana": 21.766
+      },
+      "restart_to_health_s": {
+        "vals": [
+          0.772,
+          0.862,
+          0.739
+        ],
+        "mediana": 0.772
+      },
+      "bytes_por_incidente_residente": 690.1,
+      "residentes_en_vec": 100000,
+      "total_aceptados_mediana": 100000,
+      "gen_throughput_rps": [
+        584.5,
+        571.3,
+        557.8
+      ],
+      "gen_elapsed_s": [
+        171.073,
+        175.034,
+        179.284
+      ],
+      "gen_codes_ok": true,
+      "memoria_perdida_en_restart": true
+    }
+  },
+  "corridas_crudas": {
+    "10000": [
+      {
+        "n": 10000,
+        "seed": 20261012,
+        "label": "nc1",
+        "rss_empty_kb": 8000,
+        "rss_loaded_kb": 15724,
+        "rss_loaded2_kb": 15724,
+        "peak_rss_kb_time_v": 15652,
+        "rss_delta_loaded_minus_empty_kb": 7724,
+        "preflight_p50_ms": 2.683,
+        "preflight_p95_ms": 3.086,
+        "restart_to_health_s": 0.591,
+        "stats_pre_restart": {
+          "total_errors_recorded": 10000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "CircularReasoning": 1119,
+            "StateCorruption": 1110,
+            "BadAssumption": 1134,
+            "Other": 1053,
+            "Fabrication": 1127,
+            "OutputDrift": 1147,
+            "Timeout": 1141,
+            "SkippedValidation": 1085,
+            "RecurringPattern": 1084
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 10000,
+        "seed": 20261012,
+        "label": "nc2",
+        "rss_empty_kb": 8052,
+        "rss_loaded_kb": 16052,
+        "rss_loaded2_kb": 16052,
+        "peak_rss_kb_time_v": 15952,
+        "rss_delta_loaded_minus_empty_kb": 8000,
+        "preflight_p50_ms": 2.527,
+        "preflight_p95_ms": 2.905,
+        "restart_to_health_s": 0.599,
+        "stats_pre_restart": {
+          "total_errors_recorded": 10000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "OutputDrift": 1147,
+            "Timeout": 1141,
+            "CircularReasoning": 1119,
+            "Fabrication": 1127,
+            "RecurringPattern": 1084,
+            "SkippedValidation": 1085,
+            "BadAssumption": 1134,
+            "Other": 1053,
+            "StateCorruption": 1110
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 10000,
+        "seed": 20261012,
+        "label": "nc3",
+        "rss_empty_kb": 7968,
+        "rss_loaded_kb": 15968,
+        "rss_loaded2_kb": 15968,
+        "peak_rss_kb_time_v": 16156,
+        "rss_delta_loaded_minus_empty_kb": 8000,
+        "preflight_p50_ms": 2.481,
+        "preflight_p95_ms": 2.898,
+        "restart_to_health_s": 0.773,
+        "stats_pre_restart": {
+          "total_errors_recorded": 10000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "SkippedValidation": 1085,
+            "Fabrication": 1127,
+            "StateCorruption": 1110,
+            "Other": 1053,
+            "OutputDrift": 1147,
+            "RecurringPattern": 1084,
+            "CircularReasoning": 1119,
+            "BadAssumption": 1134,
+            "Timeout": 1141
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      }
+    ],
+    "100000": [
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "nc1",
+        "rss_empty_kb": 7948,
+        "rss_loaded_kb": 75336,
+        "rss_loaded2_kb": 75336,
+        "peak_rss_kb_time_v": 79244,
+        "rss_delta_loaded_minus_empty_kb": 67388,
+        "preflight_p50_ms": 20.338,
+        "preflight_p95_ms": 23.764,
+        "restart_to_health_s": 0.772,
+        "stats_pre_restart": {
+          "total_errors_recorded": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "Timeout": 11306,
+            "StateCorruption": 11221,
+            "SkippedValidation": 11045,
+            "BadAssumption": 11340,
+            "OutputDrift": 11176,
+            "CircularReasoning": 11130,
+            "Fabrication": 11101,
+            "RecurringPattern": 10869,
+            "Other": 10812
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "nc2",
+        "rss_empty_kb": 7996,
+        "rss_loaded_kb": 75304,
+        "rss_loaded2_kb": 75304,
+        "peak_rss_kb_time_v": 80920,
+        "rss_delta_loaded_minus_empty_kb": 67308,
+        "preflight_p50_ms": 19.062,
+        "preflight_p95_ms": 20.358,
+        "restart_to_health_s": 0.862,
+        "stats_pre_restart": {
+          "total_errors_recorded": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "CircularReasoning": 11130,
+            "RecurringPattern": 10869,
+            "Fabrication": 11101,
+            "BadAssumption": 11340,
+            "OutputDrift": 11176,
+            "Timeout": 11306,
+            "StateCorruption": 11221,
+            "Other": 10812,
+            "SkippedValidation": 11045
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 100000,
+        "seed": 20261012,
+        "label": "nc3",
+        "rss_empty_kb": 7956,
+        "rss_loaded_kb": 75360,
+        "rss_loaded2_kb": 75360,
+        "peak_rss_kb_time_v": 81212,
+        "rss_delta_loaded_minus_empty_kb": 67404,
+        "preflight_p50_ms": 19.502,
+        "preflight_p95_ms": 21.766,
+        "restart_to_health_s": 0.739,
+        "stats_pre_restart": {
+          "total_errors_recorded": 100000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "StateCorruption": 11221,
+            "Timeout": 11306,
+            "Other": 10812,
+            "BadAssumption": 11340,
+            "Fabrication": 11101,
+            "OutputDrift": 11176,
+            "RecurringPattern": 10869,
+            "SkippedValidation": 11045,
+            "CircularReasoning": 11130
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      }
+    ],
+    "50000": [
+      {
+        "n": 50000,
+        "seed": 20261012,
+        "label": "nc1",
+        "rss_empty_kb": 8192,
+        "rss_loaded_kb": 42716,
+        "rss_loaded2_kb": 42716,
+        "peak_rss_kb_time_v": 45216,
+        "rss_delta_loaded_minus_empty_kb": 34524,
+        "preflight_p50_ms": 9.761,
+        "preflight_p95_ms": 11.505,
+        "restart_to_health_s": 0.772,
+        "stats_pre_restart": {
+          "total_errors_recorded": 50000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "SkippedValidation": 5489,
+            "RecurringPattern": 5391,
+            "Fabrication": 5531,
+            "StateCorruption": 5556,
+            "OutputDrift": 5626,
+            "Other": 5448,
+            "CircularReasoning": 5581,
+            "BadAssumption": 5714,
+            "Timeout": 5664
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 50000,
+        "seed": 20261012,
+        "label": "nc2",
+        "rss_empty_kb": 8212,
+        "rss_loaded_kb": 42836,
+        "rss_loaded2_kb": 42836,
+        "peak_rss_kb_time_v": 45968,
+        "rss_delta_loaded_minus_empty_kb": 34624,
+        "preflight_p50_ms": 10.309,
+        "preflight_p95_ms": 11.206,
+        "restart_to_health_s": 0.658,
+        "stats_pre_restart": {
+          "total_errors_recorded": 50000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "Other": 5448,
+            "Fabrication": 5531,
+            "SkippedValidation": 5489,
+            "CircularReasoning": 5581,
+            "OutputDrift": 5626,
+            "BadAssumption": 5714,
+            "RecurringPattern": 5391,
+            "StateCorruption": 5556,
+            "Timeout": 5664
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      },
+      {
+        "n": 50000,
+        "seed": 20261012,
+        "label": "nc3",
+        "rss_empty_kb": 8184,
+        "rss_loaded_kb": 42748,
+        "rss_loaded2_kb": 42748,
+        "peak_rss_kb_time_v": 44452,
+        "rss_delta_loaded_minus_empty_kb": 34564,
+        "preflight_p50_ms": 10.015,
+        "preflight_p95_ms": 11.671,
+        "restart_to_health_s": 0.568,
+        "stats_pre_restart": {
+          "total_errors_recorded": 50000,
+          "total_preflights": 100,
+          "total_validations": 0,
+          "prefights_blocked": 100,
+          "validations_failed": 0,
+          "errors_by_category": {
+            "Other": 5448,
+            "StateCorruption": 5556,
+            "Timeout": 5664,
+            "RecurringPattern": 5391,
+            "OutputDrift": 5626,
+            "SkippedValidation": 5489,
+            "CircularReasoning": 5581,
+            "Fabrication": 5531,
+            "BadAssumption": 5714
+          },
+          "top_recurring_patterns": []
+        },
+        "stats_post_restart": {
+          "total_errors_recorded": 0,
+          "total_preflights": 0,
+          "total_validations": 0,
+          "prefights_blocked": 0,
+          "validations_failed": 0,
+          "errors_by_category": {},
+          "top_recurring_patterns": []
+        }
+      }
+    ]
+  },
+  "escala_1m_abortada": {
+    "n_target": 1000000,
+    "abort_en_aceptados": 301175,
+    "limite_abort": 300000,
+    "rss_vivo_abort_kb": 207316,
+    "peak_rss_kb_time_v": 206644,
+    "bytes_por_incidente_a_escala": 704.9,
+    "motivo": "record_error hace 2 scans O(n) por POST (recurrence+pattern_id): rps colapsa ~O(n^2) total; rps@live medido 13.2/s a ~288k aceptados (corrida previa). Corrida completa ~15h => aborto controlado.",
+    "timeline": "rss_1m_abort_timeline.txt (stats+RSS cada 30s)"
+  },
+  "hallazgos": [
+    "RAM escala lineal sin cap: ~700 B/registro medidos en los 4 puntos (10k: 819 B (piso ~1MB), 50k: 707 B, 100k: 690 B, 301k: 705 B). Validacion empirica de la anatomia (~680 B teoricos + overhead).",
+    "Extrapolacion 1M completa: ~0.67-0.70 GiB de RAM solo para el Vec (705 B x 1M) + preflight p50 proyectado ~195 ms (lineal: 19.5 ms @100k).",
+    "La ingesta es O(n^2) total: record_error hace 2 scans O(n) por POST (recurrence agent_r.rs:176 y pattern_id :181). rps medidos: ~730 limpio -> 13.2/s a 288k aceptados. Corrida 1M completa ~15h => datapoint con aborto controlado en 301k (timeline rss_1m_abort_timeline.txt cada 30s).",
+    "Preflight p50/p95 crecen 7.7x/7.5x de 10k a 100k (2.53->19.50 ms / 2.91->21.77 ms): recall O(n) por consulta + clon del Vec de scores.",
+    "Con cap 10k (baseline): el preflight NO se degrada tanto (p50 2.6->3.0 ms) pero el RSS crece igual por churn; sin cap, la RAM es honesta pero la latencia explota. Ninguna de las dos configuraciones escala a 1M: es LA justificacion cuantitativa de las oleadas 3-5 (SQLite+top-N residente)."
+  ]
+}
