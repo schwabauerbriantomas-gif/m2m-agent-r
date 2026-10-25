@@ -552,7 +552,12 @@ mod tests {
         let store = ReceiptStore::open_no_env(&dir).unwrap();
         let r = store.issue(&sample_payload()).unwrap();
         let mut tampered = r.clone();
-        tampered.sig_hex = format!("{}0", &tampered.sig_hex[..63]); // 64 chars, wrong
+        // Alterar SIEMPRE la firma: cambiar el ÚLTIMO char falla 1/16 de las
+        // veces (si el original ya termina en '0', la firma queda idéntica y
+        // el test sería flaky). Voltear el primero garantiza hex distinto.
+        let first = tampered.sig_hex.chars().next().unwrap();
+        let flipped = if first == '0' { '1' } else { '0' };
+        tampered.sig_hex = format!("{}{}", flipped, &tampered.sig_hex[1..]); // 64 chars, wrong
         let path = dir.join(day_filename(&r));
         std::fs::write(
             &path,
