@@ -23,7 +23,7 @@ reproducible = rechazado.
 ```bash
 cd ~/swarm_agent_r/wt_rambench
 CARGO_TARGET_DIR=$HOME/swarm_agent_r/target cargo build --release --bin m2m-vector-search
-bash scripts/rambench/full_baseline.sh          # 9 corridas (~10 min) -> reports/baseline_rambench.json
+bash scripts/rambench/full_baseline.sh          # 9 corridas (~10 min) -> docs/benchmarks/baseline_rambench.json
 CARGO_TARGET_DIR=$HOME/swarm_agent_r/target cargo run --release --example rambench_anatomy
 ```
 
@@ -51,7 +51,7 @@ bash scripts/rambench/baseline_run.sh <N> <SEED> <PORT> <BIN> <OUTDIR> <LABEL>
 5. **Restart**: kill del server + medición de arranque en frío hasta `/health`
    OK, y `GET /agent-r/stats` post-restart (verifica pérdida total).
 6. **3 repeticiones por N**, mediana reportada. JSON crudo por corrida en
-   `reports/rambench_raw/run_r{1,2,3}_n{N}.json` (+ latencias crudas por curl).
+   (raw runs not archived; aggregate: docs/benchmarks/baseline_rambench.json).
 
 ### Condiciones de la medición
 
@@ -90,8 +90,8 @@ solo cambia `<BIN>`), y **siempre** medianas de 3 corridas mínimas.
 
 ## Archivos
 
-- `reports/baseline_rambench.json` — números crudos + medianas + anatomía + hallazgos.
-- `reports/rambench_raw/` — 9 corridas crudas (RSS, latencias por curl, gen stats, time -v).
+- `docs/benchmarks/baseline_rambench.json` — números crudos + medianas + anatomía + hallazgos.
+- 9 corridas crudas (RSS, latencias por curl, gen stats, time -v) — raw runs not archived; aggregate: docs/benchmarks/baseline_rambench.json.
 - `scripts/rambench/gen_errors.py` — generador determinista (asyncio, concurrencia 10).
 - `scripts/rambench/baseline_run.sh` — una corrida (server limpio → N errores → RSS/latencia/restart).
 - `scripts/rambench/full_baseline.sh` — 3×N completo + agregación.
@@ -101,8 +101,8 @@ solo cambia `<BIN>`), y **siempre** medianas de 3 corridas mínimas.
 ## Extensión nocap (branch `ar2/rambench-nocap`) — la firma real sin el cap
 
 Mismo harness, binario con el único cambio `MAX_ERRORS: 10_000 → 2_000_000` en
-`src/agent_r.rs`. Datos en `reports/rambench_nocap.json`,
-`reports/rambench_raw_nocap/` y `reports/rambench_raw_nocap/run_1m_abort.json`.
+`src/agent_r.rs`. Datos en `docs/benchmarks/rambench_nocap.json`,
+(raw runs not archived; aggregate: docs/benchmarks/rambench_nocap.json).
 
 | N | ΔRSS (KB) | preflight p50 (ms) | p95 (ms) | B/registro |
 |---|---|---|---|---|

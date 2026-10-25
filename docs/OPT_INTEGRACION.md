@@ -41,7 +41,7 @@ consulta la memoria de TODO el swarm.
 
 ## Números medidos
 
-### Matriz 100k nocap ×3 (`reports/int_rambench.json`; integrado pre-O4)
+### Matriz 100k nocap ×3 (`docs/benchmarks/int_rambench.json`; integrado pre-O4)
 | métrica | integrado | base 511ea9d |
 |---|---|---|
 | rps ingesta (mediana) | **755.9** | 571.3 |
@@ -50,7 +50,7 @@ consulta la memoria de TODO el swarm.
 | preflight p50 / p95 | **16.9 / 18.7 ms** | 19.5 / 21.8 ms |
 | integridad | 200000/200000 OK ×3 | idem |
 
-### Sanity O4 post-port ×3 @100k (`reports/o4_sanity.json`)
+### Sanity O4 post-port ×3 @100k (`docs/benchmarks/o4_sanity.json`)
 Con el harness ya en modo efímero (server sin state path):
 - rps ingesta mediana **727.8** [736.8, 683.6, 754.8] — en línea con el 755.9
   del integrado pre-O4 (la dedup O4 no degrada la ingesta cuando los payloads
@@ -61,10 +61,10 @@ Con el harness ya en modo efímero (server sin state path):
 - restart frío 0.735 s (efímero: sin carga de snapshot).
 - 100000/100000 aceptados, distribución por categoría uniforme (9×~11k).
 
-### Escala 300k (pre-O4, `reports/int_raw_nocap/`)
+### Escala 300k (pre-O4, raw runs not archived; aggregate: docs/benchmarks/int_rambench.json)
 309,096 aceptados, 529.4 B/reg, ~5.5 min (base: 301k en ~17.3 min, rps 770→13.2).
 
-### **1M COMPLETO ×2** (`reports/int_raw_1m/` pre-O4, `reports/o4_raw_1m/` CON O4+swarm)
+### **1M COMPLETO ×2** (raw runs `int_raw_1m`/`o4_raw_1m` not archived; aggregate: docs/benchmarks/int_rambench.json, docs/benchmarks/o4_sanity.json)
 - **CON O4+swarm (validación final)**: 1,000,000/1,000,000 en **19:10 min**,
   rps mediana **901** (min 651, max 967), **decaimiento 0.1%** (902.8 primeras
   5 ventanas vs 901.9 últimas) — lineal de 0 a 1M con dedup activo.
