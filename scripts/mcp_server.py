@@ -25,12 +25,13 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
-# ── Paths absolutos al repo (independiente del cwd del cliente MCP) ────────
-REPO = "/home/user/swarm_agent_r/wt_mcp"
+# ── Paths al repo (AGENT_R_REPO override; default: padre de scripts/) ──────
+REPO = os.environ.get("AGENT_R_REPO", str(Path(__file__).resolve().parent.parent))
 M2MCTL = f"{REPO}/scripts/m2mctl.py"
 
 # Timeouts generosos (segundos) por familia de operación.

@@ -1,13 +1,13 @@
 //! agent_r::meta — Crítico LLM externo envuelto en la lib (RSI Capa 2).
 //!
-//! REGLA (guardrail arxiv:2310.01798 + orden de user 15-oct): la crítica
+//! REGLA (guardrail arxiv:2310.01798 + decisión 15-oct): la crítica
 //! LLM externa cuenta como señal SOLO si
 //!   1. se emite un receipt HMAC del claim ANTES de consultar al crítico,
 //!   2. el veredicto pasa por la validación programática N0–N3 (con store)
 //!      DESPUÉS — el crítico nunca auto-aplica nada,
 //!   3. todo queda en el snapshot del Agent-R (memoria, no stdout).
 //!
-//! Modelo: **glm-5.3-flash** (orden verbatim de user: "No uses glm 4.7 usa
+//! Modelo: **glm-5.3-flash** (decisión verbatim: "No uses glm 4.7 usa
 //! glm 5.3 flash"). Endpoint z.ai coding PAAS, temperature 0.0,
 //! max_tokens>=3000 (el reasoning_content consume tokens).
 //!
@@ -35,9 +35,9 @@ use crate::agent_r::AgentR;
 use crate::receipts::ReceiptStore;
 use serde_json::{json, Value};
 
-/// Modelo del crítico — FIJO por orden de user (15-oct): glm-5.3-flash.
+/// Modelo del crítico — FIJO por decisión de diseño (15-oct): glm-5.3-flash.
 pub const CRITIC_MODEL: &str = "glm-5.3-flash";
-/// Endpoint z.ai (plan coding de user; costo cubierto por el plan).
+/// Endpoint z.ai (API pública).
 pub const CRITIC_ENDPOINT: &str = "https://api.z.ai/api/coding/paas/v4/chat/completions";
 /// Piso de max_tokens: el modelo razona (reasoning_content consume tokens).
 pub const CRITIC_MAX_TOKENS: u32 = 3000;

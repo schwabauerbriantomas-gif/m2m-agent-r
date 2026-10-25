@@ -1,4 +1,4 @@
-//! agent_r::meta_curiosity — Curiosidad guiada (RSI, pedido de user 16-oct):
+//! agent_r::meta_curiosity — Curiosidad guiada (RSI, decisión de diseño 16-oct):
 //! el sistema debe GENERARSE preguntas en puntos críticos en vez de esperar
 //! que un humano las formule ("ya van 3 preguntas guías que podían ser
 //! autónomas": valida numéricamente / ¿por qué baja el recall? / esta misma).

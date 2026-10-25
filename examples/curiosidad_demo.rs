@@ -1,4 +1,4 @@
-//! Demo curiosidad guiada: las 3 preguntas que user hizo manualmente en la
+//! Demo curiosidad guiada: las 3 preguntas semilla manualmente en la
 //! ronda 2, regeneradas por el sistema y respondidas con la evidencia real.
 //! Uso: cargo run --release --example curiosidad_demo
 use agent_r::agent_r::{AgentR, ErrorCategory, ErrorSeverity};
@@ -7,7 +7,7 @@ use agent_r::meta_curiosity::{self, CriticalPoint, QStatus};
 fn main() {
     let mut a = AgentR::new_ephemeral();
 
-    // P1 (user: "Valida numéricamente") — trigger: claim sin A/B
+    // P1 (pregunta: "Valida numéricamente") — trigger: claim sin A/B
     let p1 = meta_curiosity::observe_claim_without_validation(
         &mut a,
         "el label post-hoc mejora la señal del tuning",
@@ -28,7 +28,7 @@ fn main() {
         None,
     );
 
-    // P2 (user: "¿Por qué baja el recall?") — trigger: delta de métrica
+    // P2 (pregunta: "¿Por qué baja el recall?") — trigger: delta de métrica
     let p2 = meta_curiosity::observe_metric_delta(&mut a, "recall", 100.0, 88.9, 5.0)
         .expect("delta 11.1 >= 5 debe disparar la pregunta");
     let l2 = a.record_error(
@@ -47,7 +47,7 @@ fn main() {
         None,
     );
 
-    // P3 (user: la pregunta sobre preguntas) — trigger: surprise.
+    // P3 (pregunta: la pregunta sobre preguntas) — trigger: surprise.
     // Queda ABIERTA: su respuesta es este módulo mismo (meta_curiosity).
     let _p3 = meta_curiosity::ask(
         &mut a,

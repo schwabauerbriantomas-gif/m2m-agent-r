@@ -38,7 +38,7 @@ async def main() -> int:
         command=VENV_PY,
         args=[SERVER],
         env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-             "HOME": os.environ.get("HOME", "/home/user")},
+             "HOME": os.environ.get("HOME", "")},
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:

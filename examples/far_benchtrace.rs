@@ -1,6 +1,6 @@
 //! FAR offline de Agent-R contra BenchTrace (Evolution Eval, babyai level-1).
 //!
-//! Protocolo (sin entorno vivo, sin API de pago — decisión de user):
+//! Protocolo (sin entorno vivo, sin API de pago — decisión de diseño):
 //! 1. Importar TODOS los core_failure de los snapshots como memoria acumulada
 //!    de Agent-R (~45 reglas; dedup por fingerprint).
 //! 2. Para cada tarea de evolution_evaluation.json: sus `evolution_snapshots`
