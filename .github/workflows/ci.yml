@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # No -D warnings (yet): the legacy vector-search engine modules still
+      # carry a backlog of clippy warnings; the Agent-R core
+      # (agent_r/agent_swarm/api_server/receipts/meta*) is warning-free.
+      # Tighten to -D warnings as the legacy modules are cleaned up or split
+      # out. --lib --bins scopes linting to the library and binary targets.
+      - run: cargo clippy --lib --bins
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    env:
+      TMPDIR: /tmp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Full `cargo test`: unit + integration + doc-tests. The two doc-tests
+      # that used to require the `critic` feature were rewritten against the
+      # real API. No `cuda` feature in CI (no GPU runner): the gpu module is
+      # a no-op without it. Python test drivers under tests/ are dev tools
+      # and not run here.
+      - run: cargo test
