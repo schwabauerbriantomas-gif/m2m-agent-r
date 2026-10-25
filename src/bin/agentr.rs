@@ -1,6 +1,7 @@
-//! CLI de Agent-R: uso diario SIN server HTTP. Habla directo con la lib
-//! (latencia de proceso ~ms, cero red). Estado persistente compartido con el
-//! server vía AGENT_R_STATE_PATH (default: ~/.agentr/state.json).
+//! CLI de Agent-R: uso diario directo con la lib (latencia de proceso ~ms,
+//! cero red) + `serve` para levantar el server HTTP cuando hace falta.
+//! Estado persistente compartido vía AGENT_R_STATE_PATH (default:
+//! ~/.agentr/state.json).
 //!
 //! Comandos:
 //!   agentr remember <op> <what> [--why W] [--severity S] [--category C] [--tags t1,t2] [--prevention P]
@@ -8,6 +9,7 @@
 //!   agentr validate --op OP [--output O]                  → validate N0-N3 del output
 //!   agentr show <id> | deprecate <id> <reason> | stats | flush
 //!   agentr mcp                                            → servidor MCP stdio (JSON-RPC 2.0)
+//!   agentr serve [--port N]                               → server HTTP (default 8199, 127.0.0.1)
 //!
 //! Formato de salida: texto para humano, --json para pipes/scripts.
 
@@ -213,6 +215,24 @@ fn main() {
         }
         "path" => println!("{}", state_path().display()),
         "mcp" => mcp_serve(),
+        "serve" => {
+            // Server HTTP (migrado del CLI viejo): mismo run_server que hoy,
+            // escucha en 127.0.0.1. Estado Agent-R vía AGENT_R_STATE_PATH.
+            let port: u16 = match get("--port") {
+                Some(p) => p
+                    .parse()
+                    .unwrap_or_else(|_| die("puerto inválido (uso: agentr serve --port N)")),
+                None => 8199,
+            };
+            println!("[agentr] server HTTP en 127.0.0.1:{port} (Ctrl-C para cortar)");
+            let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+            rt.block_on(async {
+                if let Err(e) = m2m_vector_search::api_server::run_server(port).await {
+                    eprintln!("[agentr] server error: {e}");
+                    std::process::exit(1);
+                }
+            });
+        }
         _ => {
             println!("agentr — memoria de errores (CLI nativo, sin server)");
             println!();
@@ -224,6 +244,7 @@ fn main() {
             println!("  agentr deprecate <id> <reason>");
             println!("  agentr stats | flush | path");
             println!("  agentr mcp                      # servidor MCP stdio para agentes");
+            println!("  agentr serve [--port N]         # server HTTP (default 8199, 127.0.0.1)");
             println!();
             println!("Estado: $AGENT_R_STATE_PATH o ~/.agentr/state.json");
         }
