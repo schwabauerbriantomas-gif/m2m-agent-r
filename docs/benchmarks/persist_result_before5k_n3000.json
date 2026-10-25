@@ -1,0 +1,32 @@
+{
+  "label": "before5k",
+  "n": 3000,
+  "seed": 20261012,
+  "elapsed_s": 412.984,
+  "throughput_rps": 7.3,
+  "codes": {
+    "200": 3000
+  },
+  "snapshot_bytes_on_disk": 1841005,
+  "stats_after_ingest": {
+    "total_errors_recorded": 3003,
+    "unique_incidents": 3003,
+    "total_preflights": 0,
+    "total_validations": 0,
+    "prefights_blocked": 0,
+    "validations_failed": 0,
+    "errors_by_category": {
+      "Fabrication": 349,
+      "StateCorruption": 333,
+      "BadAssumption": 328,
+      "CircularReasoning": 343,
+      "OutputDrift": 345,
+      "Timeout": 364,
+      "SkippedValidation": 326,
+      "Other": 294,
+      "RecurringPattern": 321
+    },
+    "top_recurring_patterns": []
+  },
+  "state_path": "/tmp/p2_before5k.json"
+}

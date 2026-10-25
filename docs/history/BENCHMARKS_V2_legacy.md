@@ -1,3 +1,4 @@
+# LEGACY (2026-03): benchmarks del motor vector-search viejo, superseded por [docs/BENCHMARKS.md](../BENCHMARKS.md). Los claims de tests/warnings ya no aplican.
 # M2M Vector Search - Benchmarks v2
 
 **Date**: 2026-03-28

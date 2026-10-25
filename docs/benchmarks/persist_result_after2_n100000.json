@@ -1,0 +1,32 @@
+{
+  "label": "after2",
+  "n": 100000,
+  "seed": 20261012,
+  "elapsed_s": 126.604,
+  "throughput_rps": 789.9,
+  "codes": {
+    "200": 100000
+  },
+  "snapshot_bytes_on_disk": 61540858,
+  "stats_after_ingest": {
+    "total_errors_recorded": 100003,
+    "unique_incidents": 100003,
+    "total_preflights": 0,
+    "total_validations": 0,
+    "prefights_blocked": 0,
+    "validations_failed": 0,
+    "errors_by_category": {
+      "BadAssumption": 11341,
+      "OutputDrift": 11176,
+      "StateCorruption": 11221,
+      "Other": 10812,
+      "Timeout": 11306,
+      "SkippedValidation": 11046,
+      "Fabrication": 11102,
+      "RecurringPattern": 10869,
+      "CircularReasoning": 11130
+    },
+    "top_recurring_patterns": []
+  },
+  "state_path": "/tmp/p2_after2.json"
+}

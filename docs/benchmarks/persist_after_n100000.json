@@ -1,0 +1,19 @@
+{
+  "n": 100000,
+  "ok_200": 100000,
+  "seed": 20261012,
+  "concurrency": 10,
+  "url": "http://127.0.0.1:19105/agent-r/record-error",
+  "elapsed_s": 126.534,
+  "throughput_rps": 790.3,
+  "codes": {
+    "200": 100000
+  },
+  "generator": "splitmix64(idx,seed)",
+  "payload_shape": {
+    "categories": 9,
+    "severities": 3,
+    "operations": 15,
+    "tag_pool": 20
+  }
+}
