@@ -5,6 +5,7 @@ pub mod clustering;
 pub mod config;
 pub mod dataset_transformer;
 pub mod encoding;
+pub mod ep_fidelity;
 pub mod hnsw_index;
 pub mod hrm2_engine;
 pub mod interfaces;
